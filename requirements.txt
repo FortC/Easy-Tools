@@ -1,0 +1,17 @@
+# Easy-Tools 运行依赖
+#
+# 刻意不列 pywin32 / pynput：Win32 接入层用纯标准库 ctypes 实现
+# （见 easy_tools/win32/），理由见 easy_tools/win32/__init__.py。
+# 少两个原生依赖，就少两类"换 Python 版本装不上"的问题。
+
+PySide6>=6.6
+openpyxl>=3.1
+
+# OCR 后端（可选）。不装程序照常运行，只是 OCR 关键词规则不会命中，
+# 配置中心的 OCR 页会如实显示"不可用 + 原因"。
+# 注意：需要与本机 Python 版本匹配的 onnxruntime wheel（cp314 尚未提供时
+# 会安装失败，属预期情况，程序已做降级处理）。
+# rapidocr_onnxruntime>=1.3
+
+# 打包用
+# PyInstaller>=6.0

@@ -1,0 +1,30 @@
+# Local Python environment and test/build output
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+.zcode/
+.agents/
+
+# Application data and screenshots may contain private user content
+/data/
+/evidence/
+
+# Large generated distributables
+/build/
+/build-*/
+/dist/
+/dist-*/
+/build-installer/
+/build-installer-*/
+/dist-installer/
+/dist-installer-*/
+
+# Quantized model weights exceed GitHub's regular Git file limit.
+# Download the model described in models/MODEL-NOTICE.txt before packaging.
+/models/*.gguf
+
+# Local project planning state
+/KANBAN.json
+*.log

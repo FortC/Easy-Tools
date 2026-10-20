@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "general": { "start_minimized": true, "close_on_click_outside": true, "close_on_action": true, "open_settings_on_start": false, "language": "zh_CN" },
+  "privacy": { "exclude_from_capture": true },
+  "question_banks": [],
+  "llm": { "enabled": true, "prefer_bank_answer": true, "answer_content_only": false, "provider": "builtin", "ccswitch_app": "", "allow_cloud": false },
+  "trigger": {
+    "middle_button_enabled": true, "tap_max_ms": 400, "drag_threshold_px": 12,
+    "middle_click_mode": "swallow_tap", "drag_scroll_enabled": true, "scroll_ticks_per_pixel": 0.08,
+    "notify_enabled": true,
+    "hotkeys": [ { "id": "panel", "name": "呼出面板", "combo": "ctrl+alt+q", "enabled": false } ]
+  },
+  "panel": {
+    "display_mode": "tabs", "group_order": ["文本输入", "快捷打开", "截图", "AI 问答", "事件链", "系统"],
+    "columns": 5, "cell_width": 88, "cell_height": 72, "max_rows": 4,
+    "theme": "light", "opacity": 1.0, "show_search": true, "show_groups": true,
+    "show_icon": true, "cursor_offset": 16, "flip_at_edges": true
+  },
+  "ocr": { "enabled": true, "backend": "auto", "debounce_ms": 300, "region": "client", "max_width": 1280, "cache_ttl_ms": 5000, "max_keywords": 400, "keywords": [] },
+  "text_input": { "default_mode": "paste", "speed_cps": 20, "jitter_ms": 40, "restore_clipboard": true, "paste_restore_ms": 300, "ensure_foreground": true },
+
+  "actions": [
+    { "id": "open.notepad", "name": "记事本", "group": "快捷打开", "icon": "📝", "zone": "public", "order": 10, "kind": "open.app", "params": { "target": "notepad.exe" } },
+    { "id": "open.explorer", "name": "文件资源管理器", "group": "快捷打开", "icon": "📁", "zone": "public", "order": 20, "kind": "open.file", "params": { "target": "%USERPROFILE%" } },
+    { "id": "open.cmd", "name": "命令提示符", "group": "快捷打开", "icon": "💻", "zone": "public", "order": 30, "kind": "open.command", "params": { "command": "cmd.exe", "args": "/k", "cwd": "" } },
+    { "id": "open.calc", "name": "计算器", "group": "快捷打开", "icon": "🧮", "zone": "public", "order": 40, "kind": "open.app", "params": { "target": "calc.exe" } },
+    { "id": "open.bing", "name": "必应搜索", "group": "快捷打开", "icon": "🔍", "zone": "public", "order": 50, "kind": "open.url", "params": { "url": "https://www.bing.com" } },
+
+    { "id": "snip.greeting", "name": "问候语", "group": "文本输入", "icon": "💬", "zone": "public", "order": 10, "kind": "snippet.input", "params": { "snippet_id": "snip_greeting", "mode": "" } },
+    { "id": "snip.datetime", "name": "当前日期时间", "group": "文本输入", "icon": "🕒", "zone": "public", "order": 20, "kind": "snippet.input", "params": { "snippet_id": "snip_datetime", "mode": "" } },
+    { "id": "snip.fromclip", "name": "剪贴板原样输入", "group": "文本输入", "icon": "📋", "zone": "public", "order": 30, "kind": "snippet.input", "params": { "snippet_id": "snip_clipboard", "mode": "" } },
+    { "id": "type.hello", "name": "手打测试文本", "group": "文本输入", "icon": "⌨️", "zone": "public", "order": 40, "kind": "text.input", "params": { "text": "Easy-Tools 手打模式测试", "mode": "type" } },
+
+    { "id": "chain.copy_clean_paste", "name": "复制→清理→粘贴", "group": "事件链", "icon": "🔗", "zone": "public", "order": 10, "kind": "chain.run", "params": { "chain_id": "chain_copy_clean_paste" } },
+    { "id": "chain.trim_transpose", "name": "整理框选表格", "group": "事件链", "icon": "🧮", "zone": "public", "order": 20, "kind": "chain.run", "params": { "chain_id": "chain_trim_transpose" } },
+
+    { "id": "sys.settings", "name": "配置中心", "group": "系统", "icon": "⚙️", "zone": "public", "order": 10, "kind": "system.settings", "params": {} },
+    { "id": "sys.reload", "name": "重载配置", "group": "系统", "icon": "♻️", "zone": "public", "order": 20, "kind": "system.reload", "params": {} },
+
+    { "id": "capture.region", "name": "截图提问", "group": "截图", "icon": "📷", "zone": "public", "order": 10, "kind": "screen.capture", "params": { "auto_ocr": true, "copy_image": true, "ask_question": true } },
+    { "id": "llm.ask", "name": "AI 提问", "group": "AI 问答", "icon": "🤖", "zone": "public", "order": 20, "kind": "llm.ask", "params": { "use_ocr": false } },
+    { "id": "llm.ocr", "name": "OCR 提问", "group": "AI 问答", "icon": "🔎", "zone": "public", "order": 21, "kind": "llm.ask", "params": { "use_ocr": true } },
+
+    { "id": "word.cleanup", "name": "清理段落空行", "group": "Word 文字", "icon": "📃", "zone": "context", "order": 10, "kind": "clipboard.processor", "params": { "processor": "text.drop_blank_lines", "auto_paste": true } },
+    { "id": "word.trim", "name": "去首尾空白", "group": "Word 文字", "icon": "✂️", "zone": "context", "order": 20, "kind": "clipboard.processor", "params": { "processor": "text.strip", "auto_paste": true } },
+    { "id": "word.md_table", "name": "转 Markdown 表格", "group": "Word 文字", "icon": "📊", "zone": "context", "order": 30, "kind": "clipboard.processor", "params": { "processor": "table.to_markdown", "auto_paste": true } },
+    { "id": "word.upper", "name": "转大写", "group": "Word 文字", "icon": "🔡", "zone": "context", "order": 40, "kind": "clipboard.processor", "params": { "processor": "case.upper", "auto_paste": true } },
+
+    { "id": "excel.no_blank", "name": "去空行", "group": "Excel 表格", "icon": "🧹", "zone": "context", "order": 10, "kind": "clipboard.processor", "params": { "processor": "text.drop_blank_lines", "auto_paste": true } },
+    { "id": "excel.transpose", "name": "表格转置", "group": "Excel 表格", "icon": "🔄", "zone": "context", "order": 20, "kind": "clipboard.processor", "params": { "processor": "table.transpose", "auto_paste": true } },
+    { "id": "excel.csv", "name": "导出 CSV", "group": "Excel 表格", "icon": "🗂️", "zone": "context", "order": 30, "kind": "clipboard.processor", "params": { "processor": "table.to_csv", "auto_paste": false } },
+    { "id": "excel.dedupe", "name": "去重", "group": "Excel 表格", "icon": "🎯", "zone": "context", "order": 40, "kind": "clipboard.processor", "params": { "processor": "data.dedupe", "auto_paste": true } },
+    { "id": "excel.thousand", "name": "加千分位", "group": "Excel 表格", "icon": "💯", "zone": "context", "order": 50, "kind": "clipboard.processor", "params": { "processor": "number.thousands_sep", "auto_paste": true } },
+
+    { "id": "browser.baidu", "name": "打开百度", "group": "浏览器", "icon": "🌐", "zone": "context", "order": 10, "kind": "open.url", "params": { "url": "https://www.baidu.com" } },
+    { "id": "browser.ocr", "name": "抓取界面文字", "group": "浏览器", "icon": "👁️", "zone": "context", "order": 20, "kind": "ocr.copy_text", "params": {} }
+  ],
+
+  "snippets": [
+    { "id": "snip_greeting", "name": "问候语", "group": "常用语", "order": 10, "text": "您好，这是 Easy-Tools 的文本片段输入。" },
+    { "id": "snip_datetime", "name": "日期时间", "group": "常用语", "order": 20, "text": "{date} {time}" },
+    { "id": "snip_clipboard", "name": "剪贴板内容", "group": "常用语", "order": 30, "text": "{clipboard}" }
+  ],
+
+  "rules": [
+    { "id": "rule.word", "name": "Word / WPS 文字", "order": 10, "match": "any", "processes": ["winword.exe", "wps.exe", "wpsword.exe"], "title_regex": [], "ocr_keywords": [], "action_ids": ["word.cleanup", "word.trim", "word.md_table", "word.upper"] },
+    { "id": "rule.excel", "name": "Excel / WPS 表格", "order": 20, "match": "any", "processes": ["excel.exe", "et.exe", "wps.exe", "wpscloudsvr.exe"], "title_regex": [], "ocr_keywords": [], "action_ids": ["excel.no_blank", "excel.transpose", "excel.csv", "excel.dedupe", "excel.thousand"] },
+    { "id": "rule.browser", "name": "浏览器", "order": 30, "match": "any", "processes": ["chrome.exe", "msedge.exe", "firefox.exe"], "title_regex": [], "ocr_keywords": [], "action_ids": ["browser.baidu", "browser.ocr"] }
+  ],
+
+  "chains": [
+    { "id": "chain_copy_clean_paste", "name": "复制 → 清理 → 粘贴", "description": "复制选区 → 去首尾空白与空行 → 回填原位置", "trigger": { "type": "manual" },
+      "steps": [
+        { "type": "action", "id": "clipboard.copy" },
+        { "type": "action", "id": "text.strip", "input": "{clipboard}" },
+        { "type": "action", "id": "text.drop_blank_lines", "input": "{last.output}" },
+        { "type": "action", "id": "input.paste", "input": "{last.output}" }
+      ] },
+    { "id": "chain_trim_transpose", "name": "整理框选表格", "description": "复制 → 去空行 → 含表格则转置 → 回填", "trigger": { "type": "manual" },
+      "steps": [
+        { "type": "action", "id": "clipboard.copy" },
+        { "type": "action", "id": "text.drop_blank_lines", "input": "{clipboard}" },
+        { "type": "condition", "expr": "has_table", "then": [ { "type": "action", "id": "table.transpose", "input": "{last.output}" } ], "else": [] },
+        { "type": "action", "id": "input.paste", "input": "{last.output}" }
+      ] }
+  ]
+}

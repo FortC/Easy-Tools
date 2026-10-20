@@ -1,0 +1,11 @@
+Bundled model notice
+
+Model: SmolLM2-360M-Instruct by Hugging Face / HuggingFaceTB
+Quantized GGUF: Q4_K_M, derived conversion from bartowski/SmolLM2-360M-Instruct-GGUF
+Original model license: Apache-2.0 (see LICENSE-Apache-2.0.txt)
+Original model card: https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct
+Quantized file source: https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF
+
+The upstream model card states the model primarily understands and generates English.
+For Chinese questions, use the question bank's exact answers or select a Chinese-capable
+CC Switch provider. The embedded model runs locally and does not send prompts over the network.
