@@ -49,7 +49,10 @@ class TestPanel(unittest.TestCase):
         self.panel.open_at(300, 300)
         self.assertTrue(self.panel.isVisible())
         self.assertGreater(len(self.panel._cells), 0, "面板一格都没画出来")
-        self.assertGreater(len(self.panel._items), 5)
+        # Tab/分页模式下 _items 只是当前分组当前页，数量随分组大小波动；
+        # 真正要保证的是全部公共动作都进了面板数据源
+        total = sum(len(v) for v in self.panel._collect().values())
+        self.assertGreater(total, 5, "面板一个可用动作都没有")
 
     def test_search_filters_and_restores(self):
         self.panel.open_at(300, 300)
@@ -251,7 +254,8 @@ class TestChainEditor(unittest.TestCase):
             {"type": "action", "id": "input.paste", "input": "{last.output}"}]}
         dlg = ChainEditorDialog(chain, service)
         dlg.list.setCurrentRow(1)
-        self.assertEqual(dlg.editor.id_box.currentText(), "input.paste")
+        # 下拉框显示「中文名 · id」，原始 id 存在 itemData；断言数据而不是显示文本
+        self.assertEqual(dlg.editor.id_box.currentData(), "input.paste")
         self.assertEqual(dlg.editor.input_edit.text(), "{last.output}")
 
     def test_screenshot_chain_editor(self):

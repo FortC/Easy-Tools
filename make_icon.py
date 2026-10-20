@@ -1,84 +1,69 @@
 # -*- coding: utf-8 -*-
-"""生成 app.ico：Lucide「zap」闪电图标 + 品牌渐变圆角底。
+"""生成 app.ico：不依赖任何图形库，用像素数学画一个"动作面板"图标。
 
-图案元素来自现成资源（lucide-static 的 zap.svg，ISC 许可，可商用），
-本脚本只做栅格化组合：渐变圆角底板 + 白色闪电，输出多尺寸 ICO。
+为什么不用 QPixmap.save("app.ico")：Qt 的 ICO 写入插件并不保证存在，
+在不同 PySide6 构建上行为不一致。这里直接按 ICO 文件格式手写字节，
+产物确定、跨机器一致。
 
-ICO 容器仍按文件格式手写字节（不用 QPixmap.save("app.ico")）：Qt 的
-ICO 写入插件并不保证存在，在不同 PySide6 构建上行为不一致；直接写
-字节产物确定、跨机器一致。像素来源换成 Qt 栅格化，运行本脚本需要
-PySide6（开发机都有；打包产物里自带 app.ico，不会走到这里）。
+图案：深色圆角方块 + 3x2 白色圆点网格 + 一道强调色下划线 ——
+直接对应面板本身的视觉形态，比画个 "E" 字母更能说明这是什么工具。
 
-想换图案就换 easy_tools/ui/icons/ 里的 GLYPH，然后重跑：python make_icon.py
+想改图案就改这里，然后重跑：python make_icon.py
 """
 
 import struct
 from pathlib import Path
 
-ACCENT_TOP = (76, 141, 255)     # #4C8DFF
-ACCENT_BOTTOM = (36, 88, 197)   # #2458C5
-GLYPH = "zap"
-
-
-def _svg_renderer(bold: bool = False):
-    from PySide6.QtCore import QByteArray
-    from PySide6.QtSvg import QSvgRenderer
-    svg_path = (Path(__file__).parent / "easy_tools" / "ui" / "icons"
-                / (GLYPH + ".svg"))
-    svg = svg_path.read_text(encoding="utf-8").replace("currentColor", "#FFFFFF")
-    if bold:
-        # 16/32px 下 2px 描边缩成亚像素会消失，小尺寸加粗到 3px 保可辨识
-        svg = svg.replace('stroke-width="2"', 'stroke-width="3"')
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
-    if not renderer.isValid():
-        raise RuntimeError("%s.svg 解析失败，无法生成应用图标" % GLYPH)
-    return renderer
+ACCENT = (76, 141, 255)
+BG = (30, 34, 41)
+DOT = (255, 255, 255)
 
 
 def render(size):
-    """返回 size x size 的 RGBA 像素矩阵（每格为 (r,g,b,a)）。
+    """返回 size x size 的 BGRA 像素矩阵（每格为 (r,g,b,a)）。"""
+    px = [[(0, 0, 0, 0)] * size for _ in range(size)]
+    r = size * 0.22          # 圆角半径
+    m = size * 0.06          # 外边距
+    lo, hi = m, size - m
 
-    保持旧接口不变：ui/icon.py 的兜底路径（磁盘上没有 app.ico 时）
-    直接拿这个矩阵拼 QIcon。
-    """
-    from PySide6.QtCore import QRectF, Qt
-    from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter
+    def in_round_rect(x, y):
+        if not (lo <= x < hi and lo <= y < hi):
+            return False
+        cx = min(max(x, lo + r), hi - r)
+        cy = min(max(y, lo + r), hi - r)
+        return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
 
-    renderer = _svg_renderer(bold=size <= 32)
-    img = QImage(size, size, QImage.Format_RGBA8888)
-    img.fill(Qt.transparent)
-    p = QPainter(img)
-    p.setRenderHint(QPainter.Antialiasing, True)
-
-    m = size * 0.05                    # 底板外边距：16px 下约 1px，避免切边
-    r = size * 0.225                   # 圆角半径
-    board = QRectF(m, m, size - 2 * m, size - 2 * m)
-    grad = QLinearGradient(board.topLeft(), board.bottomRight())
-    grad.setColorAt(0.0, QColor(*ACCENT_TOP))
-    grad.setColorAt(1.0, QColor(*ACCENT_BOTTOM))
-    p.setPen(Qt.NoPen)
-    p.setBrush(grad)
-    p.drawRoundedRect(board, r, r)
-
-    # 白色闪电居中：大尺寸占底板约 62%，小尺寸放大到 78% 防止糊没
-    vb = renderer.viewBoxF()
-    target_w = board.width() * (0.78 if size <= 32 else 0.62)
-    scale = target_w / max(vb.width(), vb.height())
-    w, h = vb.width() * scale, vb.height() * scale
-    target = QRectF(board.center().x() - w / 2, board.center().y() - h / 2, w, h)
-    renderer.render(p, target)
-    p.end()
-
-    # QImage(RGBA8888 内存序 R,G,B,A) -> 像素矩阵。
-    # PySide6 的 constBits() 返回覆盖整个图像数据的 memoryview
-    raw = bytes(img.constBits())
-    bpl = img.bytesPerLine()
-    out = []
     for y in range(size):
-        base = y * bpl
-        out.append([tuple(raw[base + x * 4: base + x * 4 + 4])
-                    for x in range(size)])
-    return out
+        for x in range(size):
+            if in_round_rect(x, y):
+                px[y][x] = (*BG, 255)
+
+    # 3 列 x 2 行圆点
+    dot_r = size * 0.085
+    pad = size * 0.235
+    span = size - 2 * pad
+    for row in range(2):
+        for col in range(3):
+            cx = pad + span * (col + 0.5) / 3.0
+            cy = pad + span * (row + 0.5) / 2.0
+            rr = dot_r * dot_r
+            y0 = max(0, int(cy - dot_r) - 1)
+            y1 = min(size, int(cy + dot_r) + 2)
+            x0 = max(0, int(cx - dot_r) - 1)
+            x1 = min(size, int(cx + dot_r) + 2)
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    if (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= rr:
+                        px[y][x] = (*DOT, 255)
+
+    # 底部强调色下划线
+    bar_h = max(1, int(size * 0.055))
+    top = size - int(size * 0.30)
+    for y in range(top, min(size, top + bar_h)):
+        for x in range(int(size * 0.34), int(size * 0.66)):
+            if in_round_rect(x, y):
+                px[y][x] = (*ACCENT, 255)
+    return px
 
 
 def to_bgra(px):
