@@ -80,6 +80,11 @@ Windows 开发者可运行 `build.py` 和 `build_installer.py` 构建目录程�
 
 ![配置中心动作库](docs/screenshots/action-library.png)
 
+## 联系作者
+
+- 作者：clb \<[lamthebest@foxmail.com](mailto:lamthebest@foxmail.com)\>
+- 问题反馈 / 功能建议：[Issues](https://github.com/FortC/Easy-Tools/issues)
+
 ## 许可
 
-项目许可见 [`LICENSE`](LICENSE)。内置模型及 llama.cpp 运行时另遵循各自的许可，详见 `models/` 和 `vendor/llama/` 中的许可文件。
+项目许可见 [`LICENSE`](LICENSE)。内置模型及 llama.cpp 运行时另遵循各自的许可，详见 `models/` 和 `vendor/llama/` 中的许可文件；界面图标来自 [Lucide](https://github.com/lucide-icons/lucide)（ISC 许可，免费可商用），详见 `easy_tools/ui/icons/README.md`。

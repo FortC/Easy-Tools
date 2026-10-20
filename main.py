@@ -336,6 +336,8 @@ def main() -> int:
     a_about.triggered.connect(
         lambda: QMessageBox.about(None, "关于 Easy-Tools",
                                   "Easy-Tools %s\n\n全局动作面板 · 托盘常驻\n"
+                                  "作者：clb <lamthebest@foxmail.com>\n"
+                                  "问题反馈：https://github.com/FortC/Easy-Tools/issues\n"
                                   "日志：%s" % (__version__, log_path())))
     tray.setContextMenu(menu)
     tray.activated.connect(
