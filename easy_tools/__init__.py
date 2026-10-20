@@ -7,5 +7,5 @@ r"""Easy-Tools: Windows 桌面效率工具（中键动作面板 / 事件链 / Of
 - data/      运行时用户配置（开发态相对项目根，打包态落 %APPDATA%\Easy-Tools）。
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 APP_NAME = "Easy-Tools"
