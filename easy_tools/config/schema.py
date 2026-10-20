@@ -104,7 +104,7 @@ def normalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg["actions"] = acts
     for a in cfg.get("actions", []):
         a.setdefault("zone", "public")
-        a.setdefault("icon", "⭐")
+        a.setdefault("icon", "star")
         a.setdefault("order", 100)
         a.setdefault("params", {})
         a.setdefault("group", "未分组")

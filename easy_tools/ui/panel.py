@@ -19,7 +19,8 @@ import ctypes
 import html
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import (QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer,
+                            Signal, Slot)
 from PySide6.QtGui import QCloseEvent, QColor, QFontMetrics, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
 
 from ..core.app import AppService, PanelItem
 from ..core.log import get_logger
-from . import theme
+from . import icons, theme
 
 
 log = get_logger("ui.panel")
@@ -67,6 +68,17 @@ class ActionPanel(QWidget):
         self.apply_config()
 
     # ------------------------------------------------------------ 构建
+    @staticmethod
+    def _tool_button(parent, icon_name: str, tooltip: str) -> QPushButton:
+        b = QPushButton(parent)
+        b.setObjectName("PanelToolButton")
+        b.setToolTip(tooltip)
+        ic = icons.icon(icon_name, theme.palette("")["text_dim"], 15)
+        if ic is not None:
+            b.setIcon(ic)
+            b.setIconSize(QSize(15, 15))
+        return b
+
     def _build(self) -> None:
         root = self._root = QFrame(self)
         root.setObjectName("PanelRoot")
@@ -90,14 +102,10 @@ class ActionPanel(QWidget):
         self.brand.setObjectName("PanelBrand")
         header_lay.addWidget(self.brand)
         header_lay.addStretch(1)
-        self.settings_btn = QPushButton("⚙", header)
-        self.settings_btn.setObjectName("PanelToolButton")
-        self.settings_btn.setToolTip("打开设置")
+        self.settings_btn = self._tool_button(header, "settings", "打开设置")
         self.settings_btn.clicked.connect(self._request_settings)
         header_lay.addWidget(self.settings_btn)
-        self.close_btn = QPushButton("×", header)
-        self.close_btn.setObjectName("PanelToolButton")
-        self.close_btn.setToolTip("关闭面板")
+        self.close_btn = self._tool_button(header, "x", "关闭面板")
         self.close_btn.clicked.connect(self.close_panel)
         header_lay.addWidget(self.close_btn)
         outer.addWidget(header)
@@ -623,10 +631,15 @@ class _Cell(QFrame):
         lay.setContentsMargins(2, 3, 2, 3)
         lay.setSpacing(1)
         if show_icon:
-            ic = QLabel(item.icon, self)
+            ic = QLabel(self)
             ic.setObjectName("CellIcon")
             ic.setAlignment(Qt.AlignCenter)
             ic.setFixedHeight(_ICON_H)   # 固定高度，避免不同字重把格子顶歪
+            pm = icons.pixmap(item.icon, 24, theme.palette("")["accent"])
+            if pm is not None:
+                ic.setPixmap(pm)         # 内置 Lucide 矢量图标（2x 渲染防糊）
+            else:
+                ic.setText(item.icon)    # 非内置名字（如旧配置的 emoji）原样显示
             lay.addWidget(ic)
         nm = QLabel(self)
         nm.setObjectName("CellName")

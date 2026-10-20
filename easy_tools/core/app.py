@@ -232,7 +232,7 @@ class AppService:
             if a.get("zone", "public") != "public":
                 continue
             out.setdefault(a.get("group", "未分组"), []).append(PanelItem(
-                action_id=a.get("id", ""), name=a.get("name", ""), icon=a.get("icon", "⭐"),
+                action_id=a.get("id", ""), name=a.get("name", ""), icon=a.get("icon", "star"),
                 group=a.get("group", "未分组"), zone="public", source=""))
         return out
 
@@ -242,7 +242,7 @@ class AppService:
         for rule_name, actions in self.resolver.actions_for(state).items():
             # 规则仅展示明确标为软件专属的动作，避免公共动作被规则重复显示。
             out[rule_name] = [PanelItem(action_id=a.get("id", ""), name=a.get("name", ""),
-                                        icon=a.get("icon", "⭐"), group=a.get("group", rule_name),
+                                        icon=a.get("icon", "star"), group=a.get("group", rule_name),
                                         zone="context", source=rule_name)
                               for a in actions if a.get("zone") == "context"]
             if not out[rule_name]:

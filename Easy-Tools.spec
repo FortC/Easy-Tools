@@ -67,6 +67,7 @@ a = Analysis(
     datas=[
         ("easy_tools/config/defaults.json", "easy_tools/config"),
         ("easy_tools/ui/assets/check.png", "easy_tools/ui/assets"),
+        ("easy_tools/ui/icons", "easy_tools/ui/icons"),
         ("app.ico", "."),
     ] + _update_datas + [
         (_model_file, "models"),

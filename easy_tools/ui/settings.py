@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QSize, Qt, Signal, Slot
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialogButtonBox, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem,
@@ -24,7 +24,7 @@ from ..core.actions import base as action_base
 from ..core.actions.processors import all_processors
 from ..core.log import get_logger
 from ..core.paths import config_path, data_dir
-from . import labels, theme
+from . import icons, labels, theme
 from .background import submit
 from .chain_editor import ChainEditorDialog
 from .widgets import Column, Field, JsonTableEditor
@@ -130,11 +130,16 @@ class SidebarTabs(QWidget):
 
     currentChanged = Signal(int)
 
+    # 每个导航页对应的 Lucide 图标名（easy_tools/ui/icons/，ISC 许可）。
+    # 图标缺失时条目仍创建，只是没有图标——不阻塞配置中心启动。
     _MARKS = {
-        "软件更新": "⬆", "动作库": "✦", "文本片段": "▤", "特定操作区规则": "⌖",
-        "事件链": "⤳", "触发设置": "◉", "面板样式": "▦",
-        "OCR 设置": "◫", "文本输入": "⌨", "隐私保护": "◉",
-        "知识库": "▤", "本机模型": "◇", "数据/导入导出": "⇄",
+        "软件更新": "rocket", "动作库": "layout-grid", "文本片段": "text",
+        "特定操作区规则": "crosshair", "事件链": "workflow",
+        "触发设置": "mouse-pointer-click", "面板样式": "palette",
+        "分类排序": "list-ordered",
+        "OCR 设置": "scan-text", "文本输入": "keyboard",
+        "隐私保护": "shield", "知识库": "database",
+        "本机模型": "cpu", "数据/导入导出": "arrow-down-up",
     }
 
     def __init__(self, parent=None) -> None:
@@ -145,6 +150,7 @@ class SidebarTabs(QWidget):
         self._nav = QListWidget(self)
         self._nav.setObjectName("SettingsNavigation")
         self._nav.setFixedWidth(196)
+        self._nav.setIconSize(QSize(18, 18))
         self._nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         sidebar = QFrame(self)
         sidebar.setObjectName("SettingsSidebar")
@@ -177,9 +183,11 @@ class SidebarTabs(QWidget):
 
     def addTab(self, page: QWidget, title: str) -> int:
         self._titles.append(title)
-        mark = self._MARKS.get(title, "•")
-        item = QListWidgetItem("%s    %s" % (mark, title))
+        item = QListWidgetItem(title)
         item.setToolTip(title)
+        mark = self._MARKS.get(title)
+        if mark and icons.has_icon(mark):
+            item.setIcon(icons.icon(mark, "#475569", 18))
         self._nav.addItem(item)
         index = self._pages.addWidget(page)
         if index == 0:
@@ -348,11 +356,11 @@ class SettingsWindow(QWidget):
             [Column("name", "名称", 130), Column("group", "分组", 100),
              Column("kind", "类型", 96, fmt=lambda r: labels.kind_label(r.get("kind"))),
              Column("zone", "操作区", 82, fmt=lambda r: labels.zone_label(r.get("zone"))),
-             Column("icon", "图标", 50),
+             Column("icon", "图标", 110),
              Column("params", "参数", 260, fmt=lambda r: labels.describe_params(r, self.store))],
             [Field("name", "名称"),
              Field("group", "分组", default="未分组"),
-             Field("icon", "图标（emoji）", default="⭐"),
+             Field("icon", "图标", "icon", default="star"),
              Field("zone", "操作区", "enum", ["public", "context"],
                    "公共区=始终显示；特定操作区=仅被规则命中时显示",
                    labels={"public": "公共区", "context": "特定操作区"}),

@@ -20,40 +20,40 @@
   "text_input": { "default_mode": "paste", "speed_cps": 20, "jitter_ms": 40, "restore_clipboard": true, "paste_restore_ms": 300, "ensure_foreground": true },
 
   "actions": [
-    { "id": "open.notepad", "name": "记事本", "group": "快捷打开", "icon": "📝", "zone": "public", "order": 10, "kind": "open.app", "params": { "target": "notepad.exe" } },
-    { "id": "open.explorer", "name": "文件资源管理器", "group": "快捷打开", "icon": "📁", "zone": "public", "order": 20, "kind": "open.file", "params": { "target": "%USERPROFILE%" } },
-    { "id": "open.cmd", "name": "命令提示符", "group": "快捷打开", "icon": "💻", "zone": "public", "order": 30, "kind": "open.command", "params": { "command": "cmd.exe", "args": "/k", "cwd": "" } },
-    { "id": "open.calc", "name": "计算器", "group": "快捷打开", "icon": "🧮", "zone": "public", "order": 40, "kind": "open.app", "params": { "target": "calc.exe" } },
-    { "id": "open.bing", "name": "必应搜索", "group": "快捷打开", "icon": "🔍", "zone": "public", "order": 50, "kind": "open.url", "params": { "url": "https://www.bing.com" } },
+    { "id": "open.notepad", "name": "记事本", "group": "快捷打开", "icon": "notebook-pen", "zone": "public", "order": 10, "kind": "open.app", "params": { "target": "notepad.exe" } },
+    { "id": "open.explorer", "name": "文件资源管理器", "group": "快捷打开", "icon": "folder", "zone": "public", "order": 20, "kind": "open.file", "params": { "target": "%USERPROFILE%" } },
+    { "id": "open.cmd", "name": "命令提示符", "group": "快捷打开", "icon": "square-terminal", "zone": "public", "order": 30, "kind": "open.command", "params": { "command": "cmd.exe", "args": "/k", "cwd": "" } },
+    { "id": "open.calc", "name": "计算器", "group": "快捷打开", "icon": "calculator", "zone": "public", "order": 40, "kind": "open.app", "params": { "target": "calc.exe" } },
+    { "id": "open.bing", "name": "必应搜索", "group": "快捷打开", "icon": "search", "zone": "public", "order": 50, "kind": "open.url", "params": { "url": "https://www.bing.com" } },
 
-    { "id": "snip.greeting", "name": "问候语", "group": "文本输入", "icon": "💬", "zone": "public", "order": 10, "kind": "snippet.input", "params": { "snippet_id": "snip_greeting", "mode": "" } },
-    { "id": "snip.datetime", "name": "当前日期时间", "group": "文本输入", "icon": "🕒", "zone": "public", "order": 20, "kind": "snippet.input", "params": { "snippet_id": "snip_datetime", "mode": "" } },
-    { "id": "snip.fromclip", "name": "剪贴板原样输入", "group": "文本输入", "icon": "📋", "zone": "public", "order": 30, "kind": "snippet.input", "params": { "snippet_id": "snip_clipboard", "mode": "" } },
-    { "id": "type.hello", "name": "手打测试文本", "group": "文本输入", "icon": "⌨️", "zone": "public", "order": 40, "kind": "text.input", "params": { "text": "Easy-Tools 手打模式测试", "mode": "type" } },
+    { "id": "snip.greeting", "name": "问候语", "group": "文本输入", "icon": "message-circle", "zone": "public", "order": 10, "kind": "snippet.input", "params": { "snippet_id": "snip_greeting", "mode": "" } },
+    { "id": "snip.datetime", "name": "当前日期时间", "group": "文本输入", "icon": "calendar-clock", "zone": "public", "order": 20, "kind": "snippet.input", "params": { "snippet_id": "snip_datetime", "mode": "" } },
+    { "id": "snip.fromclip", "name": "剪贴板原样输入", "group": "文本输入", "icon": "clipboard", "zone": "public", "order": 30, "kind": "snippet.input", "params": { "snippet_id": "snip_clipboard", "mode": "" } },
+    { "id": "type.hello", "name": "手打测试文本", "group": "文本输入", "icon": "keyboard", "zone": "public", "order": 40, "kind": "text.input", "params": { "text": "Easy-Tools 手打模式测试", "mode": "type" } },
 
-    { "id": "chain.copy_clean_paste", "name": "复制→清理→粘贴", "group": "事件链", "icon": "🔗", "zone": "public", "order": 10, "kind": "chain.run", "params": { "chain_id": "chain_copy_clean_paste" } },
-    { "id": "chain.trim_transpose", "name": "整理框选表格", "group": "事件链", "icon": "🧮", "zone": "public", "order": 20, "kind": "chain.run", "params": { "chain_id": "chain_trim_transpose" } },
+    { "id": "chain.copy_clean_paste", "name": "复制→清理→粘贴", "group": "事件链", "icon": "workflow", "zone": "public", "order": 10, "kind": "chain.run", "params": { "chain_id": "chain_copy_clean_paste" } },
+    { "id": "chain.trim_transpose", "name": "整理框选表格", "group": "事件链", "icon": "table-2", "zone": "public", "order": 20, "kind": "chain.run", "params": { "chain_id": "chain_trim_transpose" } },
 
-    { "id": "sys.settings", "name": "配置中心", "group": "系统", "icon": "⚙️", "zone": "public", "order": 10, "kind": "system.settings", "params": {} },
-    { "id": "sys.reload", "name": "重载配置", "group": "系统", "icon": "♻️", "zone": "public", "order": 20, "kind": "system.reload", "params": {} },
+    { "id": "sys.settings", "name": "配置中心", "group": "系统", "icon": "settings", "zone": "public", "order": 10, "kind": "system.settings", "params": {} },
+    { "id": "sys.reload", "name": "重载配置", "group": "系统", "icon": "refresh-cw", "zone": "public", "order": 20, "kind": "system.reload", "params": {} },
 
-    { "id": "capture.region", "name": "截图提问", "group": "截图", "icon": "📷", "zone": "public", "order": 10, "kind": "screen.capture", "params": { "auto_ocr": true, "copy_image": true, "ask_question": true } },
-    { "id": "llm.ask", "name": "AI 提问", "group": "AI 问答", "icon": "🤖", "zone": "public", "order": 20, "kind": "llm.ask", "params": { "use_ocr": false } },
-    { "id": "llm.ocr", "name": "OCR 提问", "group": "AI 问答", "icon": "🔎", "zone": "public", "order": 21, "kind": "llm.ask", "params": { "use_ocr": true } },
+    { "id": "capture.region", "name": "截图提问", "group": "截图", "icon": "camera", "zone": "public", "order": 10, "kind": "screen.capture", "params": { "auto_ocr": true, "copy_image": true, "ask_question": true } },
+    { "id": "llm.ask", "name": "AI 提问", "group": "AI 问答", "icon": "bot", "zone": "public", "order": 20, "kind": "llm.ask", "params": { "use_ocr": false } },
+    { "id": "llm.ocr", "name": "OCR 提问", "group": "AI 问答", "icon": "scan-text", "zone": "public", "order": 21, "kind": "llm.ask", "params": { "use_ocr": true } },
 
-    { "id": "word.cleanup", "name": "清理段落空行", "group": "Word 文字", "icon": "📃", "zone": "context", "order": 10, "kind": "clipboard.processor", "params": { "processor": "text.drop_blank_lines", "auto_paste": true } },
-    { "id": "word.trim", "name": "去首尾空白", "group": "Word 文字", "icon": "✂️", "zone": "context", "order": 20, "kind": "clipboard.processor", "params": { "processor": "text.strip", "auto_paste": true } },
-    { "id": "word.md_table", "name": "转 Markdown 表格", "group": "Word 文字", "icon": "📊", "zone": "context", "order": 30, "kind": "clipboard.processor", "params": { "processor": "table.to_markdown", "auto_paste": true } },
-    { "id": "word.upper", "name": "转大写", "group": "Word 文字", "icon": "🔡", "zone": "context", "order": 40, "kind": "clipboard.processor", "params": { "processor": "case.upper", "auto_paste": true } },
+    { "id": "word.cleanup", "name": "清理段落空行", "group": "Word 文字", "icon": "file-text", "zone": "context", "order": 10, "kind": "clipboard.processor", "params": { "processor": "text.drop_blank_lines", "auto_paste": true } },
+    { "id": "word.trim", "name": "去首尾空白", "group": "Word 文字", "icon": "scissors", "zone": "context", "order": 20, "kind": "clipboard.processor", "params": { "processor": "text.strip", "auto_paste": true } },
+    { "id": "word.md_table", "name": "转 Markdown 表格", "group": "Word 文字", "icon": "table", "zone": "context", "order": 30, "kind": "clipboard.processor", "params": { "processor": "table.to_markdown", "auto_paste": true } },
+    { "id": "word.upper", "name": "转大写", "group": "Word 文字", "icon": "case-upper", "zone": "context", "order": 40, "kind": "clipboard.processor", "params": { "processor": "case.upper", "auto_paste": true } },
 
-    { "id": "excel.no_blank", "name": "去空行", "group": "Excel 表格", "icon": "🧹", "zone": "context", "order": 10, "kind": "clipboard.processor", "params": { "processor": "text.drop_blank_lines", "auto_paste": true } },
-    { "id": "excel.transpose", "name": "表格转置", "group": "Excel 表格", "icon": "🔄", "zone": "context", "order": 20, "kind": "clipboard.processor", "params": { "processor": "table.transpose", "auto_paste": true } },
-    { "id": "excel.csv", "name": "导出 CSV", "group": "Excel 表格", "icon": "🗂️", "zone": "context", "order": 30, "kind": "clipboard.processor", "params": { "processor": "table.to_csv", "auto_paste": false } },
-    { "id": "excel.dedupe", "name": "去重", "group": "Excel 表格", "icon": "🎯", "zone": "context", "order": 40, "kind": "clipboard.processor", "params": { "processor": "data.dedupe", "auto_paste": true } },
-    { "id": "excel.thousand", "name": "加千分位", "group": "Excel 表格", "icon": "💯", "zone": "context", "order": 50, "kind": "clipboard.processor", "params": { "processor": "number.thousands_sep", "auto_paste": true } },
+    { "id": "excel.no_blank", "name": "去空行", "group": "Excel 表格", "icon": "eraser", "zone": "context", "order": 10, "kind": "clipboard.processor", "params": { "processor": "text.drop_blank_lines", "auto_paste": true } },
+    { "id": "excel.transpose", "name": "表格转置", "group": "Excel 表格", "icon": "arrow-left-right", "zone": "context", "order": 20, "kind": "clipboard.processor", "params": { "processor": "table.transpose", "auto_paste": true } },
+    { "id": "excel.csv", "name": "导出 CSV", "group": "Excel 表格", "icon": "file-spreadsheet", "zone": "context", "order": 30, "kind": "clipboard.processor", "params": { "processor": "table.to_csv", "auto_paste": false } },
+    { "id": "excel.dedupe", "name": "去重", "group": "Excel 表格", "icon": "copy-x", "zone": "context", "order": 40, "kind": "clipboard.processor", "params": { "processor": "data.dedupe", "auto_paste": true } },
+    { "id": "excel.thousand", "name": "加千分位", "group": "Excel 表格", "icon": "hash", "zone": "context", "order": 50, "kind": "clipboard.processor", "params": { "processor": "number.thousands_sep", "auto_paste": true } },
 
-    { "id": "browser.baidu", "name": "打开百度", "group": "浏览器", "icon": "🌐", "zone": "context", "order": 10, "kind": "open.url", "params": { "url": "https://www.baidu.com" } },
-    { "id": "browser.ocr", "name": "抓取界面文字", "group": "浏览器", "icon": "👁️", "zone": "context", "order": 20, "kind": "ocr.copy_text", "params": {} }
+    { "id": "browser.baidu", "name": "打开百度", "group": "浏览器", "icon": "globe", "zone": "context", "order": 10, "kind": "open.url", "params": { "url": "https://www.baidu.com" } },
+    { "id": "browser.ocr", "name": "抓取界面文字", "group": "浏览器", "icon": "eye", "zone": "context", "order": 20, "kind": "ocr.copy_text", "params": {} }
   ],
 
   "snippets": [

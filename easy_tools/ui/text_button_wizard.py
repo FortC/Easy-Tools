@@ -78,7 +78,7 @@ def build_text_button_records(cfg: Dict[str, Any], name: str, icon: str,
         "id": act_id,
         "name": name,
         "group": group,
-        "icon": str(icon).strip() or "⌨️",
+        "icon": str(icon).strip() or "keyboard",
         "zone": "public",
         "order": order,
         "kind": "snippet.input",
@@ -115,7 +115,7 @@ if _qt_available():
         def __init__(self, parent=None) -> None:
             fields = [
                 Field("name", "按钮名称"),
-                Field("icon", "图标（emoji）", default="⌨️"),
+                Field("icon", "图标", "icon", default="keyboard"),
                 Field("group", "所在分组", default="文本输入"),
                 Field("mode", "输入方式", "enum", ["", "type"],
                       labels={"": "粘贴（快，中文友好）", "type": "逐字手打（拟真）"}),
@@ -123,7 +123,7 @@ if _qt_available():
                       hint="支持变量：{date} {time} {datetime} {clipboard} {ocr_text}"),
             ]
             super().__init__("新增文本按钮", fields,
-                             {"name": "", "icon": "⌨️", "group": "文本输入",
+                             {"name": "", "icon": "keyboard", "group": "文本输入",
                               "mode": "", "text": ""}, parent=parent)
             self.setMinimumWidth(480)
 

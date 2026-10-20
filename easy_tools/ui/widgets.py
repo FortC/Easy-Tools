@@ -10,13 +10,97 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFormLayout,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QPlainTextEdit,
                                QPushButton, QSpinBox, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
+
+from . import icons
+
+
+class IconPickerDialog(QDialog):
+    """内置图标选择器：搜索过滤 + 网格预览，返回 Lucide 图标名。
+
+    也允许直接输入 emoji/文字（下面那行输入框），照顾不想用内置图标的用户。
+    """
+
+    def __init__(self, current: str = "", parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("选择图标")
+        self.resize(560, 420)
+        self._selected = ""
+
+        lay = QVBoxLayout(self)
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText("搜索图标（按名称过滤）…")
+        self._search.textChanged.connect(self._filter)
+        lay.addWidget(self._search)
+
+        self._grid = QListWidget(self)
+        self._grid.setViewMode(QListWidget.IconMode)
+        self._grid.setIconSize(QSize(22, 22))
+        self._grid.setGridSize(QSize(76, 60))
+        self._grid.setResizeMode(QListWidget.Adjust)
+        self._grid.setMovement(QListWidget.Static)
+        self._grid.setSpacing(6)
+        self._grid.itemDoubleClicked.connect(lambda _i: self._accept())
+        self._grid.itemClicked.connect(self._pick)
+        lay.addWidget(self._grid, 1)
+
+        custom = QHBoxLayout()
+        custom.addWidget(QLabel("或直接使用文字/emoji：", self))
+        self._custom = QLineEdit(current if not icons.has_icon(current) else "", self)
+        self._custom.setFixedWidth(160)
+        self._custom.textChanged.connect(lambda _t: self._grid.clearSelection())
+        custom.addWidget(self._custom)
+        custom.addStretch(1)
+        lay.addLayout(custom)
+
+        box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        box.accepted.connect(self._accept)
+        box.rejected.connect(self.reject)
+        lay.addWidget(box)
+
+        self._all = icons.icon_names()
+        self._populate("")
+        if icons.has_icon(current):
+            for i in range(self._grid.count()):
+                if self._grid.item(i).text() == current:
+                    self._grid.setCurrentItem(self._grid.item(i))
+                    break
+
+    def _populate(self, keyword: str) -> None:
+        self._grid.clear()
+        for name in self._all:
+            if keyword and keyword not in name:
+                continue
+            it = QListWidgetItem(name)
+            ic = icons.icon(name, "#2458c5", 20)
+            if ic is not None:
+                it.setIcon(ic)
+            it.setToolTip(name)
+            self._grid.addItem(it)
+
+    def _filter(self, text: str) -> None:
+        self._populate((text or "").strip())
+
+    def _pick(self, item: QListWidgetItem) -> None:
+        self._selected = item.text()
+        self._custom.clear()
+
+    def _accept(self) -> None:
+        cur = self._grid.currentItem()
+        if cur is not None:
+            self._selected = cur.text()
+        elif not self._selected:
+            self._selected = self._custom.text().strip()
+        self.accept()
+
+    def selected(self) -> str:
+        return self._selected
 
 
 @dataclass
@@ -43,6 +127,25 @@ class Column:
 
 def _widget_for(f: Field, value: Any, choices: Dict[str, List[str]]):
     """按字段类型造输入控件，并返回取值闭包。"""
+    if f.type == "icon":
+        box = QWidget()
+        h = QHBoxLayout(box)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        edit = QLineEdit()
+        edit.setText(str(value if value is not None else ""))
+        edit.setPlaceholderText("图标名或 emoji")
+        btn = QPushButton("选择…")
+
+        def _pick():
+            dlg = IconPickerDialog(edit.text(), box.window())
+            if dlg.exec() == QDialog.Accepted and dlg.selected():
+                edit.setText(dlg.selected())
+
+        btn.clicked.connect(_pick)
+        h.addWidget(edit, 1)
+        h.addWidget(btn)
+        return box, lambda: edit.text().strip()
     if f.type == "bool":
         w = QCheckBox()
         w.setChecked(bool(value))
@@ -214,6 +317,8 @@ class JsonTableEditor(QWidget):
                     elif isinstance(v, bool):
                         v = "是" if v else "否"
                 q = QTableWidgetItem(str(v if v is not None else ""))
+                if col.key == "icon" and icons.has_icon(str(v)):
+                    q.setIcon(icons.icon(str(v), "#2458c5", 16))
                 q.setToolTip(str(v))
                 self.table.setItem(r, c, q)
         self.table.blockSignals(False)
