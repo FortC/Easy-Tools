@@ -74,6 +74,8 @@ OCR 后端是可选依赖；若不可用，配置中心会显示实际状态。�
 
 Windows 开发者可运行 `build.py` 和 `build_installer.py` 构建目录程序及单文件安装器。打包需要 PyInstaller、项目依赖、.NET Framework C# 编译器，以及模型文件 `models/SmolLM2-360M-Instruct-Q4_K_M.gguf`。模型权重约 270 MB，未存入 Git；下载来源和许可信息见 [`models/MODEL-NOTICE.txt`](models/MODEL-NOTICE.txt)。
 
+项目代码约定、打包检查、GitHub Releases 和 DownloadCenter 灰度发布步骤见 [开发与发布规范](docs/开发与发布规范.md)。
+
 ## 项目截图
 
 配置中心的动作库可以筛选分类、查看动作参数，并新增、编辑、复制、删除和调整动作顺序。
