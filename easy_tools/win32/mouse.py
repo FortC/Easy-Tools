@@ -48,6 +48,29 @@ class ScrollEvent:
     source: str = "middle-drag"
 
 
+#: 触发键配置值 -> (按下消息, 释放消息, X 按钮编号；中键为 0)。
+#: X1/X2 共用同一条 WM_XBUTTONDOWN/UP 消息，具体按钮在 mouseData 高 16 位。
+_TRIGGER_BUTTONS = {
+    "middle": (api.WM_MBUTTONDOWN, api.WM_MBUTTONUP, 0),
+    "x1": (api.WM_XBUTTONDOWN, api.WM_XBUTTONUP, api.XBUTTON1),
+    "x2": (api.WM_XBUTTONDOWN, api.WM_XBUTTONUP, api.XBUTTON2),
+}
+
+
+def is_trigger_event(msg: int, mouse_data: int, button: str) -> bool:
+    """判定钩子消息是否属于配置的触发键。纯函数，无 Win32 依赖，可单测。
+
+    未识别的 button 值按中键处理（与历史配置兼容）。
+    """
+    down, up, xnum = _TRIGGER_BUTTONS.get(str(button or "middle"),
+                                          _TRIGGER_BUTTONS["middle"])
+    if msg not in (down, up):
+        return False
+    if xnum == 0:
+        return True
+    return ((int(mouse_data) >> 16) & 0xFFFF) == xnum
+
+
 class _TapClassifier:
     """中键手势状态机。纯逻辑，无 Win32 依赖，可被单测直接驱动。"""
 
@@ -132,6 +155,9 @@ class MiddleButtonHook:
         self._lock = threading.RLock()
         self._cfg = {
             "enabled": True,
+            # 触发键可选 middle/x1/x2；x1/x2 即鼠标侧键（后退/前进键）。
+            # 短按/拖动判定对三种键一视同仁。
+            "mouse_button": "middle",
             # tap_max_ms=400 / drag_threshold_px=12 是被真实用户逼出来的值：
             # 200ms/8px 会把大量真人点击判成"非短按"，而 swallow 模式下这些
             # 点击已被吞掉，表现为"按了完全没反应"。改动前先看
@@ -212,13 +238,17 @@ class MiddleButtonHook:
                     except Exception:
                         log.exception("外部点击回调异常")
 
-            if msg == api.WM_MBUTTONDOWN:
-                if not self.enabled:
-                    return 0
+            # 触发键按下/释放：只处理配置选定的那个键（中键或 X1/X2 侧键），
+            # 其余按键原样放行给系统，保留原生行为。
+            if msg in (api.WM_MBUTTONDOWN, api.WM_MBUTTONUP,
+                       api.WM_XBUTTONDOWN, api.WM_XBUTTONUP):
                 with self._lock:
-                    self._clf.press(int(data.pt.x), int(data.pt.y))
-                    swallow = self._cfg["middle_click_mode"] == "swallow_tap"
-                return 1 if swallow else 0
+                    button = self._cfg["mouse_button"]
+                if not is_trigger_event(msg, int(data.mouseData), button):
+                    return user32.CallNextHookEx(None, code, wparam, lparam)
+                if msg in (api.WM_MBUTTONDOWN, api.WM_XBUTTONDOWN):
+                    return self._handle_trigger_down(data)
+                return self._handle_trigger_up(data)
 
             if msg == api.WM_MOUSEMOVE:
                 with self._lock:
@@ -231,44 +261,54 @@ class MiddleButtonHook:
                 if ticks and do_scroll:
                     input_mod.wheel(-ticks)   # 手指下拖 => 内容向上滚
                 return 1 if (swallow and dragging) else 0
-
-            if msg == api.WM_MBUTTONUP:
-                with self._lock:
-                    is_tap, flush, dur = self._clf.release(int(data.pt.x), int(data.pt.y))
-                    swallow = self._cfg["middle_click_mode"] == "swallow_tap"
-                    do_scroll = self._cfg["drag_scroll_enabled"]
-                if is_tap:
-                    try:
-                        self._on_tap(TapEvent(x=int(data.pt.x), y=int(data.pt.y), duration_ms=dur))
-                    except Exception:
-                        log.exception("中键触发回调异常")
-                elif not self._clf.dragging and dur > 0:
-                    # 走到这里 = 这次按下被吞了但没触发任何行为。若不落日志，
-                    # 用户"按了没反应"就永远无法排查——这是真实发生过的故障。
-                    #
-                    # 之前这条日志把"阈值内位移未超"写死在文案里，无论真实原因是
-                    # 位移超标还是超时都照报，等于把唯一线索给抹掉了。现在打印
-                    # 真实位移/阈值与三个判定条件，让"按了没反应"可自诊断。
-                    dist = self._clf.last_dist
-                    why = []
-                    if dist >= self._clf.drag_threshold_px:
-                        why.append("位移 %.0fpx 超过阈值 %spx" % (dist, self._clf.drag_threshold_px))
-                    if dur > self._clf.tap_max_ms:
-                        why.append("时长 %.0fms 超过上限 %sms" % (dur, self._cfg["tap_max_ms"]))
-                    if not why:
-                        why.append("拖动标记残留（判定异常）")
-                    log.info("中键按下未判为短按（%s，时长 %.0fms，位移 %.0fpx），"
-                             "已吞掉且不弹面板；如需放宽请调 trigger.tap_max_ms / drag_threshold_px",
-                             "、".join(why), dur, dist)
-                elif flush and do_scroll and self._on_scroll is not None:
-                    try:
-                        self._on_scroll(ScrollEvent(ticks=flush))
-                    except Exception:
-                        log.exception("拖动滚动回调异常")
-                return 1 if swallow else 0
         except Exception:
             log.exception("鼠标钩子回调异常")
         return user32.CallNextHookEx(None, code, wparam, lparam)
+
+    def _handle_trigger_down(self, data) -> int:
+        """触发键按下：进短按/拖动状态机。返回钩子吞放行码。"""
+        if not self.enabled:
+            return 0
+        with self._lock:
+            self._clf.press(int(data.pt.x), int(data.pt.y))
+            swallow = self._cfg["middle_click_mode"] == "swallow_tap"
+        return 1 if swallow else 0
+
+    def _handle_trigger_up(self, data) -> int:
+        """触发键释放：判短按/补滚动。返回钩子吞放行码。"""
+        with self._lock:
+            is_tap, flush, dur = self._clf.release(int(data.pt.x), int(data.pt.y))
+            swallow = self._cfg["middle_click_mode"] == "swallow_tap"
+            do_scroll = self._cfg["drag_scroll_enabled"]
+        if is_tap:
+            try:
+                self._on_tap(TapEvent(x=int(data.pt.x), y=int(data.pt.y), duration_ms=dur))
+            except Exception:
+                log.exception("触发键短按回调异常")
+        elif not self._clf.dragging and dur > 0:
+            # 走到这里 = 这次按下被吞了但没触发任何行为。若不落日志，
+            # 用户"按了没反应"就永远无法排查——这是真实发生过的故障。
+            #
+            # 之前这条日志把"阈值内位移未超"写死在文案里，无论真实原因是
+            # 位移超标还是超时都照报，等于把唯一线索给抹掉了。现在打印
+            # 真实位移/阈值与三个判定条件，让"按了没反应"可自诊断。
+            dist = self._clf.last_dist
+            why = []
+            if dist >= self._clf.drag_threshold_px:
+                why.append("位移 %.0fpx 超过阈值 %spx" % (dist, self._clf.drag_threshold_px))
+            if dur > self._clf.tap_max_ms:
+                why.append("时长 %.0fms 超过上限 %sms" % (dur, self._cfg["tap_max_ms"]))
+            if not why:
+                why.append("拖动标记残留（判定异常）")
+            log.info("触发键按下未判为短按（%s，时长 %.0fms，位移 %.0fpx），"
+                     "已吞掉且不弹面板；如需放宽请调 trigger.tap_max_ms / drag_threshold_px",
+                     "、".join(why), dur, dist)
+        elif flush and do_scroll and self._on_scroll is not None:
+            try:
+                self._on_scroll(ScrollEvent(ticks=flush))
+            except Exception:
+                log.exception("拖动滚动回调异常")
+        return 1 if swallow else 0
 
 
 class _KBDLLHOOKSTRUCT(ctypes.Structure):

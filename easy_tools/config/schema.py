@@ -26,6 +26,7 @@ REQUIRED_SECTIONS = (
 
 _ENUMS = {
     ("trigger", "middle_click_mode"): {"swallow_tap", "native_passthrough"},
+    ("trigger", "mouse_button"): {"middle", "x1", "x2"},
     ("panel", "theme"): {"light"},
     ("panel", "display_mode"): {"tabs", "scroll"},
     ("text_input", "default_mode"): {"paste", "type"},

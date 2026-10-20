@@ -14,7 +14,8 @@ import json
 from typing import Any, Dict, List
 
 from PySide6.QtCore import QSize, Qt, Signal, Slot
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialogButtonBox, QDoubleSpinBox,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+                               QDoubleSpinBox,
                                QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem,
                                QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
@@ -213,6 +214,46 @@ class SidebarTabs(QWidget):
 
     def setCurrentIndex(self, index: int) -> None:
         self._nav.setCurrentRow(index)
+
+
+class _ChainBox(QGroupBox):
+    """事件链列表里的可选中卡片。
+
+    原实现只给卡片挂了 _et_chain 数据，没有任何点击/选中处理，
+    _selected_chain() 永远找不到 _et_selected 标记——「编辑选中/删除
+    选中/立即运行」全部卡在"请先选中"，事件链等于不可编辑。这里补上：
+    单击选中（高亮），双击直接进编辑。
+    """
+
+    clicked = Signal()
+    double_clicked = Signal()
+
+    def __init__(self, chain: Dict[str, Any], parent=None) -> None:
+        super().__init__("%s（%s）" % (chain.get("name", "?"), chain.get("id", "?")), parent)
+        self._et_chain = chain
+        self._et_selected = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("单击选中；双击直接编辑")
+        self.set_selected(False)
+
+    def set_selected(self, on: bool) -> None:
+        self._et_selected = bool(on)
+        # 选中态用样式表达；颜色与主题 accent（#2458c5 / #e8f1ff）一致
+        self.setStyleSheet(
+            "QGroupBox { background: #e8f1ff; border: 1px solid #2458c5;"
+            " border-radius: 8px; margin-top: 10px; }"
+            if on else
+            "QGroupBox { border-radius: 8px; margin-top: 10px; }")
+
+    def mousePressEvent(self, ev) -> None:
+        if ev.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(ev)
+
+    def mouseDoubleClickEvent(self, ev) -> None:
+        if ev.button() == Qt.LeftButton:
+            self.double_clicked.emit()
+        super().mouseDoubleClickEvent(ev)
 
 
 class SettingsWindow(QWidget):
@@ -528,7 +569,7 @@ class SettingsWindow(QWidget):
             if it.widget():
                 it.widget().deleteLater()
         for c in self._chain_rows:
-            box = QGroupBox("%s（%s）" % (c.get("name", "?"), c.get("id", "?")), self)
+            box = _ChainBox(c, self)
             b = QVBoxLayout(box)
             steps = c.get("steps") or []
             text = "\n".join("  %d. %s" % (i + 1, s.get("type", "?"))
@@ -538,8 +579,20 @@ class SettingsWindow(QWidget):
             b.addWidget(QLabel(str(c.get("description", ""))))
             b.addWidget(lab)
             box.setProperty("chain_id", c.get("id"))
-            box._et_chain = c          # type: ignore[attr-defined]
+            box.clicked.connect(lambda checked=False, b=box: self._select_chain_box(b))
+
+            def _open_editor(b=box):
+                self._select_chain_box(b)
+                self.edit_chain()
+
+            box.double_clicked.connect(_open_editor)
             self.chain_list.addWidget(box)
+
+    def _select_chain_box(self, box: _ChainBox) -> None:
+        for i in range(self.chain_list.count()):
+            w = self.chain_list.itemAt(i).widget()
+            if isinstance(w, _ChainBox):
+                w.set_selected(w is box)
 
     def _selected_chain(self):
         for i in range(self.chain_list.count()):
@@ -564,7 +617,9 @@ class SettingsWindow(QWidget):
             self.status.setText("请先在列表中点击选中一条事件链")
             return
         dlg = ChainEditorDialog(c, self.service, self)
-        if dlg.exec() == QDialogButtonBox.Accepted or dlg.result() == 1024:
+        # QDialogButtonBox.Accepted 不是合法的对话框返回值常量（该属性不存在，
+        # 旧代码在这里直接 AttributeError），必须用 QDialog.Accepted
+        if dlg.exec() == QDialog.Accepted:
             new = dlg.result_chain()
             for i, old in enumerate(self._chain_rows):
                 if old is c or old.get("id") == c.get("id"):
@@ -587,20 +642,44 @@ class SettingsWindow(QWidget):
         self.status.setText("已在后台执行：%s" % c.get("name"))
 
     # ------------------------------------------------------------ 简单设置页
+    @staticmethod
+    def _trigger_form_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """trigger 配置 -> 表单扁平字段：把「呼出面板」热键展开成两个可编辑项。
+
+        表单字段是扁平 key-value，而热键在配置里是 trigger.hotkeys 列表
+        （id=panel 的一项）。这里拆开进表单，_collect() 再合回去。
+        """
+        trigger = dict(cfg.get("trigger", {}) or {})
+        hk = next((h for h in (trigger.get("hotkeys") or []) if h.get("id") == "panel"), {})
+        trigger["hotkey_panel_enabled"] = bool(hk.get("enabled", False))
+        trigger["hotkey_panel_combo"] = str(hk.get("combo", "ctrl+alt+q"))
+        return trigger
+
     def _build_simple_tabs(self, cfg: Dict[str, Any]) -> None:
         self.trigger_page = FormPage([
-            Field("middle_button_enabled", "启用中键触发", "bool"),
-            Field("middle_click_mode", "中键消费模式", "enum",
+            Field("middle_button_enabled", "启用鼠标触发", "bool",
+                  "关闭后只能用下方键盘热键呼出面板"),
+            Field("mouse_button", "鼠标触发键", "enum", ["middle", "x1", "x2"],
+                  "中键=滚轮按下；X1/X2=鼠标侧键（多为后退/前进键）。"
+                  "短按呼出、按住拖动滚动的判定对所有键一致；未选中的按键保留系统原生行为",
+                  labels={"middle": "中键（默认）", "x1": "侧键 X1（后退）", "x2": "侧键 X2（前进）"}),
+            Field("middle_click_mode", "触发键消费模式", "enum",
                   ["swallow_tap", "native_passthrough"],
-                  "swallow_tap=吞掉原生中键避免误触（默认）；native_passthrough=完全保留原生中键行为"),
+                  "swallow_tap=吞掉原生按键避免误触（默认）；native_passthrough=完全保留原生按键行为",
+                  labels={"swallow_tap": "吞掉按键避免误触（默认）",
+                          "native_passthrough": "保留原生按键行为"}),
             Field("tap_max_ms", "短按上限(ms)", "int"),
             Field("drag_threshold_px", "拖动判定阈值(px)", "int"),
             Field("drag_scroll_enabled", "拖动时模拟滚动", "bool",
                   "swallow_tap 模式下由本程序用滚轮事件还原拖动滚动手感"),
             Field("scroll_ticks_per_pixel", "滚动换算(每像素 tick)", "float"),
             Field("notify_enabled", "显示右下角通知", "bool",
-                  "关闭后成功和失败提示都不弹出；详细记录仍保留在日志中")],
-            cfg.get("trigger", {}))
+                  "关闭后成功和失败提示都不弹出；详细记录仍保留在日志中"),
+            Field("hotkey_panel_enabled", "启用键盘呼出热键", "bool",
+                  "全局组合键呼出动作面板，与鼠标触发相互独立，可同时开启"),
+            Field("hotkey_panel_combo", "呼出热键组合", "text",
+                  "用 + 连接修饰键与主键，如 ctrl+alt+q、win+f1、ctrl+shift+1；保存时校验")],
+            self._trigger_form_cfg(cfg))
         self.tabs.addTab(self.trigger_page, "触发设置")
 
         panel_cfg = dict(cfg.get("panel", {}))
@@ -739,7 +818,13 @@ class SettingsWindow(QWidget):
         self.rule_editor.set_rows(cfg.get("rules", []))
         self._chain_rows = [dict(c) for c in cfg.get("chains", [])]
         self._rebuild_chain_list()
-        for page, key in ((self.trigger_page, "trigger"), (self.panel_page, "panel"),
+        # 触发页的表单值来自 _trigger_form_cfg 摊平后的字段（含热键两项），
+        # 不能直接用原始 trigger 段回填
+        trigger_flat = self._trigger_form_cfg(cfg)
+        for k, _get, setter in self.trigger_page._getters:
+            if k in trigger_flat:
+                setter(trigger_flat[k])
+        for page, key in ((self.panel_page, "panel"),
                           (self.ocr_form_page, "ocr"), (self.text_page, "text_input"),
                           (self.privacy_page, "privacy")):
             for k, _get, setter in page._getters:
@@ -782,7 +867,30 @@ class SettingsWindow(QWidget):
                 r["action_ids"] = [x.rsplit("（", 1)[-1].rstrip("）") for x in ids]
         cfg["rules"] = rules
         cfg["chains"] = self._chain_rows
-        cfg["trigger"] = self.trigger_page.collect()
+        # 触发页：把两个热键表单项合回 trigger.hotkeys（id=panel 的一项）
+        trigger = self.trigger_page.collect()
+        hk_enabled = bool(trigger.pop("hotkey_panel_enabled", False))
+        hk_combo = str(trigger.pop("hotkey_panel_combo", "")).strip().lower()
+        if hk_enabled and hk_combo:
+            from ..win32.input import parse_combo
+            try:
+                parse_combo(hk_combo)
+            except Exception as e:
+                raise ValueError("呼出热键「%s」无法解析：%s" % (hk_combo, e))
+        hotkeys = [dict(h) for h in (cfg.get("trigger", {}).get("hotkeys") or [])]
+        hit = False
+        for h in hotkeys:
+            if h.get("id") == "panel":
+                h["enabled"] = bool(hk_enabled)
+                if hk_combo:
+                    h["combo"] = hk_combo
+                hit = True
+        if not hit:
+            hotkeys.append({"id": "panel", "name": "呼出面板",
+                            "combo": hk_combo or "ctrl+alt+q",
+                            "enabled": bool(hk_enabled)})
+        trigger["hotkeys"] = hotkeys
+        cfg["trigger"] = trigger
         cfg["panel"] = self.panel_page.collect()
         cfg["panel"]["group_order"] = self.group_order_page.collect()["group_order"]
         cfg["ocr"] = self.ocr_form_page.collect()

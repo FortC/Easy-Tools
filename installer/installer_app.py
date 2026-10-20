@@ -33,7 +33,7 @@ from PySide6.QtGui import QIcon
 BS = chr(92)
 
 APP_NAME = "Easy-Tools"
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 PUBLISHER = "Easy-Tools"
 UNINSTALL_KEY = "EasyTools"
 REG_ROOT = ("HKCU" + chr(92) + "Software" + chr(92) + "Microsoft" + chr(92)

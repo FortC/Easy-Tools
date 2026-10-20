@@ -5,7 +5,7 @@
   "question_banks": [],
   "llm": { "enabled": true, "prefer_bank_answer": true, "answer_content_only": false, "provider": "builtin", "ccswitch_app": "", "allow_cloud": false },
   "trigger": {
-    "middle_button_enabled": true, "tap_max_ms": 400, "drag_threshold_px": 12,
+    "middle_button_enabled": true, "mouse_button": "middle", "tap_max_ms": 400, "drag_threshold_px": 12,
     "middle_click_mode": "swallow_tap", "drag_scroll_enabled": true, "scroll_ticks_per_pixel": 0.08,
     "notify_enabled": true,
     "hotkeys": [ { "id": "panel", "name": "呼出面板", "combo": "ctrl+alt+q", "enabled": false } ]
