@@ -121,6 +121,17 @@ def monitor_rect_at_cursor() -> Tuple[int, int, int, int]:
     raise RuntimeError("无法读取当前显示器尺寸")
 
 
+def monitor_work_area_at(x: int, y: int) -> Tuple[int, int, int, int]:
+    """Physical work area (excluding taskbars/docked bars) for a screen point."""
+    monitor = user32.MonitorFromPoint(api.POINT(x, y), 2)
+    info = api.MONITORINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        r = info.rcWork
+        return r.left, r.top, r.right - r.left, r.bottom - r.top
+    raise RuntimeError("无法读取触发点所在显示器的可用工作区")
+
+
 def client_rect_on_screen(hwnd: int) -> Tuple[int, int, int, int]:
     """客户区在屏幕坐标系下的 (left, top, right, bottom)。"""
     r = api.RECT()
