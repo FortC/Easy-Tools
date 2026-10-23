@@ -1,4 +1,5 @@
 from pathlib import Path
+from zipfile import ZipFile
 
 from openpyxl import Workbook
 
@@ -32,12 +33,83 @@ def test_excel_question_bank_and_original_answer(tmp_path):
     assert result["matches"][0]["source"] == "物理题库"
 
 
-def test_non_excel_question_bank_is_rejected(tmp_path):
+def test_legacy_doc_question_bank_is_rejected_with_conversion_hint(tmp_path):
     import pytest
-    path = tmp_path / "bank.docx"
+    path = tmp_path / "bank.doc"
     path.write_bytes(b"not-an-excel-file")
-    with pytest.raises(ValueError, match="Excel"):
+    with pytest.raises(ValueError, match="另存为 .docx"):
         load_question_bank(path)
+
+
+def _write_docx(path, body):
+    xml = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+           f'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           f'<w:body>{body}<w:sectPr/></w:body></w:document>')
+    with ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", xml)
+
+
+def test_word_knowledge_bank_extracts_headings_paragraphs_and_tables(tmp_path):
+    path = tmp_path / "运维手册.docx"
+    heading = '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>模型升级</w:t></w:r></w:p>'
+    paragraph = ('<w:p><w:r><w:t>极速版下载的模型保存在用户数据目录，更新软件后会自动复用，'
+                 '不需要再次下载。</w:t></w:r></w:p>')
+    table = ('<w:tbl><w:tr><w:tc><w:p><w:r><w:t>更新策略</w:t></w:r></w:p></w:tc>'
+             '<w:tc><w:p><w:r><w:t>模型文件保留在本机</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
+    _write_docx(path, heading + paragraph + table)
+
+    entries = load_question_bank(path)
+
+    assert len(entries) == 1
+    assert all(entry.kind == "document" for entry in entries)
+    assert "模型升级" in entries[0].question
+    assert "用户数据目录" in entries[0].answer
+    assert "模型文件保留" in entries[0].answer
+    assert "第 2 段" in entries[0].row
+    assert "表格 1 第 1 行" in entries[0].row
+
+
+def test_word_knowledge_bank_retrieval_returns_cited_document_evidence(tmp_path):
+    path = tmp_path / "模型说明.docx"
+    paragraph = ('<w:p><w:r><w:t>轻量版模型文件保存在本机用户数据目录。升级 Easy-Tools 后，'
+                 '程序会自动加载已有模型文件，用户不需要重复下载。</w:t></w:r></w:p>')
+    _write_docx(path, paragraph)
+
+    class Store:
+        def section(self, key, default=None):
+            if key == "question_banks":
+                return [{"id": "word-1", "name": "模型说明", "path": str(path), "enabled": True}]
+            return default
+
+    service = QuestionAnswerService(Store())
+    result = service.retrieve("软件升级后是否要重新下载本机模型？")
+
+    assert result
+    assert result[0]["kind"] == "document"
+    assert result[0]["source"] == "模型说明"
+    assert "第 1 段" in result[0]["row"]
+    assert "不需要重复下载" in result[0]["answer"]
+
+
+def test_word_evidence_is_sent_to_model_and_not_returned_as_an_excel_answer():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from easy_tools.core.app import AppService
+    from easy_tools.core.question_bank import prefers_original_answer, verified_bank_answer
+
+    evidence = [{"kind": "document", "source": "模型说明.docx", "row": "更新 · 第 3 段",
+                 "question": "模型升级说明", "answer": "模型会在升级后自动复用。", "score": 0.7}]
+    service = object.__new__(AppService)
+    service.question_answer = SimpleNamespace(requires_document_evidence=lambda: True)
+    service.store = SimpleNamespace(section=lambda *_: {
+        "enabled": True, "provider": "builtin", "answer_content_only": False})
+    service.builtin_model = SimpleNamespace(answer=Mock(return_value="升级后自动加载已有模型。"))
+    service.ccswitch_model = SimpleNamespace(answer=Mock())
+
+    assert service.answer_question("升级后还要下载模型吗？", evidence) == "升级后自动加载已有模型。"
+    service.builtin_model.answer.assert_called_once_with("升级后还要下载模型吗？", evidence)
+    assert not prefers_original_answer(evidence)
+    assert verified_bank_answer(evidence) is None
 
 
 def test_excel_uses_correct_answer_column_not_question_type(tmp_path):

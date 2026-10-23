@@ -19,6 +19,9 @@ import time
 import winreg
 import threading
 import tempfile
+import uuid
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
@@ -33,7 +36,7 @@ from PySide6.QtGui import QIcon
 BS = chr(92)
 
 APP_NAME = "Easy-Tools"
-VERSION = "0.4.0"
+VERSION = "0.4.2"
 PUBLISHER = "Easy-Tools"
 UNINSTALL_KEY = "EasyTools"
 REG_ROOT = ("HKCU" + chr(92) + "Software" + chr(92) + "Microsoft" + chr(92)
@@ -139,23 +142,152 @@ def owned_file(target: Path, relative: str) -> Path:
     return path
 
 
-def make_shortcut(target_exe: str, link: Path, desc: str) -> bool:
-    """用 WScript.Shell 建快捷方式（不依赖 pywin32）。"""
-    link.parent.mkdir(parents=True, exist_ok=True)
-    ps = (
-        "$s = New-Object -ComObject WScript.Shell; "
-        "$l = $s.CreateShortcut('" + str(link).replace("'", "''") + "'); "
-        "$l.TargetPath = '" + target_exe.replace("'", "''") + "'; "
-        "$l.WorkingDirectory = '" + str(Path(target_exe).parent).replace("'", "''") + "'; "
-        "$l.Description = '" + desc + "'; "
-        "$l.Save()"
-    )
+def replace_file_with_retry(staged: Path, destination: Path, *, attempts: int = 6,
+                            retry_delay: float = 0.35, report_path: Path | None = None) -> None:
+    """Atomically replace one installed file, leaving the old file intact on failure."""
+    last_error = None
+    for attempt in range(max(1, attempts)):
+        try:
+            os.replace(staged, destination)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            if attempt + 1 < max(1, attempts):
+                time.sleep(retry_delay * (attempt + 1))
+    raise RuntimeError(
+        "无法替换安装文件 %s（%s）。请退出 Easy-Tools（包括托盘和内置模型进程），"
+        "检查目标目录权限或安全软件拦截后重试；原文件已保留。" % (report_path or destination, last_error)
+    ) from last_error
+
+
+def atomic_copy(src: Path, destination: Path, *, attempts: int = 6,
+                retry_delay: float = 0.35) -> None:
+    """Stage beside the destination so a failed update never truncates the old file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, staged_name = tempfile.mkstemp(
+        prefix=".%s." % destination.name, suffix=".easy-tools-new", dir=str(destination.parent))
+    os.close(fd)
+    staged = Path(staged_name)
     try:
-        subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
-                       check=True, capture_output=True, timeout=30, creationflags=NO_CONSOLE)
+        shutil.copy2(src, staged)
+        replace_file_with_retry(staged, destination, attempts=attempts, retry_delay=retry_delay)
+    finally:
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _temporary_neighbor(destination: Path, suffix: str) -> Path:
+    fd, name = tempfile.mkstemp(prefix=".%s." % destination.name, suffix=suffix,
+                                dir=str(destination.parent))
+    os.close(fd)
+    path = Path(name)
+    path.unlink()
+    return path
+
+
+def transactional_copy(src: Path, destination: Path, changes: list[tuple[Path, Path | None]]) -> None:
+    """Replace one file while retaining a same-volume rename for rollback."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, staged_name = tempfile.mkstemp(
+        prefix=".%s." % destination.name, suffix=".easy-tools-new", dir=str(destination.parent))
+    os.close(fd)
+    staged = Path(staged_name)
+    backup = None
+    change = (destination, None)
+    try:
+        shutil.copy2(src, staged)
+        if destination.exists():
+            backup = _temporary_neighbor(destination, ".easy-tools-backup")
+            replace_file_with_retry(destination, backup, report_path=destination)
+        change = (destination, backup)
+        changes.append(change)
+        try:
+            replace_file_with_retry(staged, destination)
+        except Exception:
+            if backup and backup.exists():
+                replace_file_with_retry(backup, destination)
+            changes.pop()
+            raise
+    finally:
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def rollback_files(changes: list[tuple[Path, Path | None]]) -> None:
+    failures = []
+    for destination, backup in reversed(changes):
+        try:
+            if destination.exists():
+                destination.unlink()
+            if backup and backup.exists():
+                replace_file_with_retry(backup, destination)
+        except Exception as exc:
+            failures.append("%s (%s)" % (destination, exc))
+    if failures:
+        raise RuntimeError("安装失败且自动回滚未完成；保留的旧文件备份请联系支持处理：" + "；".join(failures))
+
+
+def make_shortcut(target_exe: str, link: Path, desc: str) -> bool:
+    """用 Windows Shell COM 创建快捷方式，不启动 PowerShell 子进程。"""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD), ("Data4", wintypes.BYTE * 8)]
+
+        @classmethod
+        def parse(cls, value):
+            parsed = uuid.UUID(value)
+            return cls(parsed.time_low, parsed.time_mid, parsed.time_hi_version,
+                       (wintypes.BYTE * 8)(*parsed.bytes[8:]))
+
+    def method(interface, index, *arguments):
+        vtable = ctypes.cast(interface, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        return ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *arguments)(vtable[index])
+
+    def check(result):
+        if result < 0:
+            raise OSError("Windows Shell COM error 0x%08X" % (result & 0xFFFFFFFF))
+
+    ole32 = ctypes.OleDLL("ole32")
+    ole32.CoInitialize.argtypes = (ctypes.c_void_p,)
+    ole32.CoInitialize.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = ()
+    ole32.CoCreateInstance.argtypes = (ctypes.POINTER(GUID), ctypes.c_void_p, wintypes.DWORD,
+                                      ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p))
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    initialized = False
+    shell_link = ctypes.c_void_p()
+    persist_file = ctypes.c_void_p()
+    try:
+        check(ole32.CoInitialize(None))
+        initialized = True
+        class_id = GUID.parse("00021401-0000-0000-C000-000000000046")
+        shell_link_id = GUID.parse("000214F9-0000-0000-C000-000000000046")
+        persist_file_id = GUID.parse("0000010B-0000-0000-C000-000000000046")
+        check(ole32.CoCreateInstance(ctypes.byref(class_id), None, 1,
+                                     ctypes.byref(shell_link_id), ctypes.byref(shell_link)))
+        check(method(shell_link, 20, wintypes.LPCWSTR)(shell_link, target_exe))
+        check(method(shell_link, 9, wintypes.LPCWSTR)(shell_link, str(Path(target_exe).parent)))
+        check(method(shell_link, 7, wintypes.LPCWSTR)(shell_link, desc))
+        query_interface = method(shell_link, 0, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p))
+        check(query_interface(shell_link, ctypes.byref(persist_file_id), ctypes.byref(persist_file)))
+        check(method(persist_file, 6, wintypes.LPCWSTR, wintypes.BOOL)(persist_file, str(link), True))
         return link.exists()
-    except Exception:
+    except (OSError, AttributeError, TypeError):
         return False
+    finally:
+        for interface in (persist_file, shell_link):
+            if interface:
+                try:
+                    method(interface, 2)(interface)
+                except Exception:
+                    pass
+        if initialized:
+            ole32.CoUninitialize()
 
 
 def register_uninstall(target: Path) -> None:
@@ -200,63 +332,83 @@ def perform_install(src: Path, dst: Path, shortcuts: bool, cb=None):
     kill_running(dst)
     time.sleep(0.2)
     files = [p for p in src.rglob("*") if p.is_file()]
-    # Updates must remove DLLs left by an older payload. Overlay-copying alone
-    # leaves those files in _internal; Windows may then load an obsolete Qt/CRT
-    # dependency before the current PySide6 copy and fail importing QtCore.
+    # Keep all old files recoverable until every new file and the manifest are in place.
     expected_internal = {
-        p.relative_to(src).as_posix()
+        p.relative_to(src).as_posix().casefold()
         for p in files
         if p.is_relative_to(src / "_internal")
     }
+    expected = {p.relative_to(src).as_posix().casefold() for p in files}
+    expected.add("uninstall.exe")
     manifest_path = dst / MANIFEST
+    stale_files = []
     if manifest_path.is_file():
         lines = manifest_path.read_text(encoding="utf-8-sig").splitlines()
         if len(lines) < 3 or lines[0] != MANIFEST_HEADER or Path(lines[1]).resolve() != dst:
             raise ValueError("旧版本安装清单无效，已停止覆盖以保护文件。")
-        expected = {p.relative_to(src).as_posix().casefold() for p in files}
-        expected.add("uninstall.exe")
         for relative in lines[2:]:
             old_file = owned_file(dst, relative)
             if old_file.relative_to(dst).as_posix().casefold() not in expected and old_file.is_file():
-                old_file.unlink()
+                stale_files.append(old_file)
     old_internal = dst / "_internal"
     if old_internal.is_dir():
         for old_file in old_internal.rglob("*"):
-            if old_file.is_file() and old_file.relative_to(dst).as_posix() not in expected_internal:
-                owned_file(dst, str(old_file.relative_to(dst))).unlink()
-        for old_dir in sorted(
-                (p for p in old_internal.rglob("*") if p.is_dir()),
-                key=lambda p: len(p.parts), reverse=True):
-            try:
-                owned_file(dst, str(old_dir.relative_to(dst))).rmdir()
-            except OSError:
-                pass
-    total = max(1, len(files))
+            if old_file.is_file() and old_file.relative_to(dst).as_posix().casefold() not in expected_internal:
+                stale_files.append(owned_file(dst, str(old_file.relative_to(dst))))
+    for filename in ("卸载 " + APP_NAME + ".cmd", "uninstall_inner.cmd"):
+        legacy = owned_file(dst, filename)
+        if legacy.is_file():
+            stale_files.append(legacy)
+    stale_files = list({path.resolve().as_posix().casefold(): path for path in stale_files}.values())
+    total = max(1, len(files) + 1)
     say(0, "正在复制文件…")
     dst.mkdir(parents=True, exist_ok=True)
     done = 0
     last_percent = -1
-    for f in files:
-        rel = f.relative_to(src)
-        out = owned_file(dst, str(rel))
-        out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(f, out)
-        done += 1
-        percent = int(done * 95 / total)
-        if percent != last_percent:
-            say(percent, "正在复制 " + str(rel))
-            last_percent = percent
     exe = dst / (APP_NAME + ".exe")
-    shutil.copy2(uninstaller_source(), dst / "Uninstall.exe")
-    # Remove the old recursive CMD entry points during an upgrade.
-    for filename in ("卸载 " + APP_NAME + ".cmd", "uninstall_inner.cmd"):
-        legacy = owned_file(dst, filename)
-        if legacy.is_file():
-            legacy.unlink()
-    manifest_files = [str(p.relative_to(src)) for p in files] + ["Uninstall.exe"]
     manifest_temporary = dst / (MANIFEST + ".tmp")
-    manifest_temporary.write_text("\n".join([MANIFEST_HEADER, str(dst), *manifest_files]) + "\n", encoding="utf-8")
-    os.replace(manifest_temporary, manifest_path)
+    changes = []
+    try:
+        for f in files:
+            rel = f.relative_to(src)
+            out = owned_file(dst, str(rel))
+            transactional_copy(f, out, changes)
+            done += 1
+            percent = int(done * 95 / total)
+            if percent != last_percent:
+                say(percent, "正在复制 " + str(rel))
+                last_percent = percent
+        transactional_copy(uninstaller_source(), dst / "Uninstall.exe", changes)
+        manifest_files = [str(p.relative_to(src)) for p in files] + ["Uninstall.exe"]
+        manifest_temporary.write_text(
+            "\n".join([MANIFEST_HEADER, str(dst), *manifest_files]) + "\n", encoding="utf-8")
+        transactional_copy(manifest_temporary, manifest_path, changes)
+        for old_file in stale_files:
+            if old_file.exists():
+                backup = _temporary_neighbor(old_file, ".easy-tools-backup")
+                replace_file_with_retry(old_file, backup, report_path=old_file)
+                changes.append((old_file, backup))
+    except Exception:
+        rollback_files(changes)
+        raise
+    finally:
+        try:
+            manifest_temporary.unlink()
+        except FileNotFoundError:
+            pass
+    for _, backup in changes:
+        if backup:
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+    if old_internal.is_dir():
+        for old_dir in sorted((p for p in old_internal.rglob("*") if p.is_dir()),
+                              key=lambda p: len(p.parts), reverse=True):
+            try:
+                owned_file(dst, str(old_dir.relative_to(dst))).rmdir()
+            except OSError:
+                pass
     say(96, "正在创建快捷方式…")
     if shortcuts:
         make_shortcut(str(exe), start_menu_dir() / (APP_NAME + ".lnk"),

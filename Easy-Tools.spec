@@ -18,6 +18,9 @@ import sys
 _model_file = os.path.join("models", "SmolLM2-360M-Instruct-Q4_K_M.gguf")
 _llama_dir = os.path.join("vendor", "llama")
 _build_tag = os.environ.get("EASYTOOLS_BUILD_TAG", "")
+_edition = os.environ.get("EASYTOOLS_EDITION", "full").lower()
+if _edition not in ("lite", "full"):
+    raise SystemExit("EASYTOOLS_EDITION 必须是 lite 或 full")
 _build_dir = "build-" + _build_tag if _build_tag else "build"
 _python_ssl_binaries = [(os.path.join(sys.base_prefix, "DLLs", name), ".")
                         for name in ("libssl-3-x64.dll", "libcrypto-3-x64.dll")
@@ -35,7 +38,7 @@ _llama_datas = [(os.path.join(_llama_dir, name), "llama")
                 or name.lower().startswith("license-")]
 from easy_tools.core.runtime import msvc_runtime_files
 _llama_datas += [(str(path), 'llama') for path in msvc_runtime_files()]
-if not os.path.isfile(_model_file):
+if _edition == "full" and not os.path.isfile(_model_file):
     raise SystemExit("缺少内置模型权重：" + _model_file)
 if not os.path.isfile(os.path.join(_llama_dir, "llama-server.exe")):
     raise SystemExit("缺少 llama.cpp CPU 运行时：" + _llama_dir)
@@ -79,8 +82,9 @@ a = Analysis(
         ("easy_tools/ui/assets/check.png", "easy_tools/ui/assets"),
         ("easy_tools/ui/icons", "easy_tools/ui/icons"),
         ("app.ico", "."),
-    ] + _update_datas + [
+    ] + _update_datas + ([
         (_model_file, "models"),
+    ] if _edition == "full" else []) + [
         ("models/MODEL-NOTICE.txt", "models"),
         ("models/LICENSE-Apache-2.0.txt", "models"),
     ] + _ocr_datas + _llama_datas,

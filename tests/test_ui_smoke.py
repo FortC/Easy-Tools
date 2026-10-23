@@ -154,8 +154,25 @@ class TestSettingsWindow(unittest.TestCase):
         titles = [self.win.tabs.tabText(i) for i in range(self.win.tabs.count())]
         for expect in ("动作库", "文本片段", "特定操作区规则", "事件链",
                        "触发设置", "面板样式", "OCR 设置", "文本输入",
-                       "数据/导入导出"):
+                       "数据/导入导出", "综合配置"):
             self.assertIn(expect, titles)
+
+    def test_tool_management_is_primary_and_configuration_pages_are_grouped(self):
+        navigation = self.win.tabs._nav
+        visible_titles = [navigation.item(i).text() for i in range(navigation.count())
+                          if not navigation.item(i).isHidden()]
+        self.assertEqual(visible_titles[0], "工具管理")
+        self.assertIn("综合配置", visible_titles)
+        self.assertFalse(hasattr(self.win.tabs, "more"))
+        config_titles = [self.win.tabs._config_tabs.tabText(i)
+                         for i in range(self.win.tabs._config_tabs.count())]
+        self.assertIn("触发设置", config_titles)
+        self.assertIn("本机模型", config_titles)
+        self.assertIn("隐私保护", config_titles)
+        local_model_index = next(i for i in range(self.win.tabs.count())
+                                 if self.win.tabs.tabText(i) == "本机模型")
+        self.win.tabs.setCurrentIndex(local_model_index)
+        self.assertIs(self.win.tabs.currentWidget(), self.win.local_model_page)
 
     def test_save_roundtrip_is_valid(self):
         """保存 → 校验 → 立即生效：跑真实的 _collect + store.update。"""
@@ -180,12 +197,16 @@ class TestSettingsWindow(unittest.TestCase):
     def test_screenshot_actions_tab(self):
         self.win.resize(1100, 720)
         self.win.show()
-        self.win.tabs.setCurrentIndex(0)
+        actions_index = next(i for i in range(self.win.tabs.count())
+                             if self.win.tabs.tabText(i) == "动作库")
+        self.win.tabs.setCurrentIndex(actions_index)
         path = _shot(self.win, "settings_actions.png")
         self.assertGreater(os.path.getsize(path), 5000)
 
     def test_screenshot_rules_tab(self):
-        self.win.tabs.setCurrentIndex(2)
+        rules_index = next(i for i in range(self.win.tabs.count())
+                           if self.win.tabs.tabText(i) == "特定操作区规则")
+        self.win.tabs.setCurrentIndex(rules_index)
         path = _shot(self.win, "settings_rules.png")
         self.assertGreater(os.path.getsize(path), 5000)
 

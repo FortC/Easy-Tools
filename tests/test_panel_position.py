@@ -38,14 +38,14 @@ def _fresh_panel():
 
 
 class PanelPositionDpiTest(unittest.TestCase):
-    VS = (0, 0, 3840, 2160)  # 虚拟屏物理矩形
+    WORK_AREA = (0, 0, 3840, 2160)  # 当前显示器可用工作区（物理像素）
 
-    def _run(self, x, y, dpr):
+    def _run(self, x, y, dpr, work_area=None):
         p = _fresh_panel()
         with (mock.patch.object(p, "_dpr_at", return_value=dpr),
               mock.patch.object(p, "adjustSize"),
-              mock.patch("easy_tools.win32.window.virtual_screen",
-                         return_value=self.VS),
+              mock.patch.object(p, "_work_area_at",
+                                return_value=work_area or self.WORK_AREA),
               mock.patch.object(p, "move") as mv):
             p._position(x, y)
         # move 被 mock，几何在运行前后不变，宽高可直接实测
@@ -73,6 +73,22 @@ class PanelPositionDpiTest(unittest.TestCase):
     def test_dpr为1时恒等(self):
         args, _ = self._run(300, 300, 1.0)
         self.assertEqual(args, (316, 316))  # 16×1=16
+
+    def test_底部工作区边界触发时避开任务栏(self):
+        dpr = 1.25
+        work_area = (0, 0, 1920, 1040)  # 显示器下方任务栏占用 40 个物理像素
+        x, y = 960, 1032
+        args, p = self._run(x, y, dpr, work_area)
+        h = int(p.height() * dpr)
+        top = round(args[1] * dpr)
+        self.assertLessEqual(top + h, work_area[1] + work_area[3] - 2)
+        self.assertLess(top, y)  # 底部触发应向上展开
+
+    def test_左上角触发时向右下展开(self):
+        dpr = 1.0
+        args, _ = self._run(2, 2, dpr)
+        self.assertGreaterEqual(args[0], 2)
+        self.assertGreaterEqual(args[1], 2)
 
 
 if __name__ == "__main__":

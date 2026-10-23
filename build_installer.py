@@ -20,6 +20,9 @@ sys.path.insert(0, str(ROOT))
 from installer.installer_app import APP_NAME, VERSION  # noqa: E402
 
 TAG = next((sys.argv[i + 1] for i, arg in enumerate(sys.argv[:-1]) if arg == "--tag"), "")
+EDITION = next((sys.argv[i + 1] for i, arg in enumerate(sys.argv[:-1]) if arg == "--edition"), "full").lower()
+if EDITION not in ("lite", "full"):
+    raise SystemExit("--edition 只接受 lite 或 full")
 if TAG and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,40}", TAG):
     raise SystemExit("--tag 只接受字母、数字、点、下划线和连字符")
 SMOKE = "--no-smoke" not in sys.argv[1:]
@@ -46,6 +49,14 @@ def main() -> int:
     if not (PAYLOAD / (APP_NAME + ".exe")).exists():
         print("缺少产物：%s，请先运行 python build.py" % PAYLOAD)
         return 1
+    model_files = list(PAYLOAD.rglob("*.gguf"))
+    if EDITION == "lite" and model_files:
+        print("极速版载荷不得包含 GGUF 模型：%s" % model_files[0])
+        return 1
+    if EDITION == "full" and not any(path.name == "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+                                      for path in model_files):
+        print("完整版载荷缺少内置模型权重")
+        return 1
 
     for output in (OUT_DIR, WORK):
         resolved = output.resolve()
@@ -69,7 +80,7 @@ def main() -> int:
     cmd = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--onefile",
         "--windowed",
-        "--name", "Easy-Tools-Setup-%s" % VERSION,
+        "--name", "Easy-Tools-Setup-%s-%s" % (VERSION, EDITION.title()),
         "--icon", str(ROOT / "app.ico"),
         "--distpath", str(OUT_DIR),
         "--workpath", str(WORK),
@@ -85,6 +96,7 @@ def main() -> int:
     # 当前开发环境 PATH 可能带有其它应用捆绑的 API-set shim / MSVC DLL。
     # PyInstaller 会把它们误收进单文件安装器，运行时遮住 Windows 系统组件。
     env = os.environ.copy()
+    env["EASYTOOLS_EDITION"] = EDITION
     native_runtime = os.path.normcase(os.path.normpath(
         os.path.join(str(Path.home()), ".cache", "codex-runtimes")))
     env["PATH"] = os.pathsep.join(
@@ -96,7 +108,7 @@ def main() -> int:
         print("PyInstaller 失败（rc=%d），没有新安装包，不要用 dist-installer 里的旧文件" % rc)
         return rc
 
-    setup = OUT_DIR / ("Easy-Tools-Setup-%s.exe" % VERSION)
+    setup = OUT_DIR / ("Easy-Tools-Setup-%s-%s.exe" % (VERSION, EDITION.title()))
     if not setup.exists():
         print("未产出安装包：%s" % setup)
         return 1

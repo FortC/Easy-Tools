@@ -278,6 +278,32 @@ class ActionPanel(QWidget):
         except Exception:
             return 1.0
 
+    def _work_area_at(self, x: int, y: int) -> tuple[int, int, int, int]:
+        """可用工作区的物理像素矩形，优先使用触发点所在显示器的 Win32 工作区。"""
+        try:
+            from ..win32 import window as w32
+            return w32.monitor_work_area_at(x, y)
+        except Exception:
+            # 预览环境或 Win32 查询失败时，使用 Qt 工作区；最后再退回虚拟桌面。
+            try:
+                from PySide6.QtCore import QPoint
+                from PySide6.QtGui import QGuiApplication
+                dpr = self._dpr_at(x, y)
+                screen = QGuiApplication.screenAt(QPoint(round(x / dpr), round(y / dpr)))
+                if screen is None:
+                    screen = QGuiApplication.primaryScreen()
+                if screen is not None:
+                    area = screen.availableGeometry()
+                    return (round(area.x() * dpr), round(area.y() * dpr),
+                            round(area.width() * dpr), round(area.height() * dpr))
+            except Exception:
+                pass
+            try:
+                from ..win32 import window as w32
+                return w32.virtual_screen()
+            except Exception:
+                return (0, 0, 1920, 1080)
+
     def _position(self, x: int, y: int) -> None:
         """把面板放到光标附近。x,y 是钩子给的物理像素。
 
@@ -304,21 +330,28 @@ class ActionPanel(QWidget):
         self._root.update()
         dpr = self._dpr_at(x, y)
         w, h = int(self.width() * dpr), int(self.height() * dpr)
-        from ..win32 import window as w32
-        vl, vt, vw, vh = w32.virtual_screen()
+        vl, vt, vw, vh = self._work_area_at(x, y)
+        vr, vb = vl + vw, vt + vh
         off = int(self._offset * dpr)
-        # 水平：右侧优先，右边放不下才翻到左侧
-        px = x - off - w if (self._flip and x + off + w > vl + vw) else x + off
-        # 垂直：下方优先；下方不够而上方够则上翻；两边都不够就取空间大的一侧
-        # 并贴边对齐（否则光标靠屏幕下沿时面板会整体跳到很远的上方）
-        if y + off + h <= vt + vh:
+        # 两个方向分别按工作区剩余空间选择；任务栏占用区不计入可用空间。
+        right_space = vr - (x + off)
+        left_space = x - off - vl
+        if x + off + w <= vr or not self._flip:
+            px = x + off
+        elif self._flip and x - off - w >= vl:
+            px = x - off - w
+        else:
+            px = x + off if right_space >= left_space else x - off - w
+        below_space = vb - (y + off)
+        above_space = y - off - vt
+        if y + off + h <= vb:
             py = y + off
         elif y - off - h >= vt:
             py = y - off - h
         else:
-            py = (y + off) if (vt + vh - y) >= (y - vt) else max(vt + 2, y - h)
-        px = max(vl + 2, min(px, vl + vw - w - 2))
-        py = max(vt + 2, min(py, vt + vh - h - 2))
+            py = y + off if below_space >= above_space else y - off - h
+        px = max(vl + 2, min(px, vr - w - 2))
+        py = max(vt + 2, min(py, vb - h - 2))
         # 最后一步：physical -> logical。Qt6 下 move() 会再乘一次该屏 dpr，
         # 不换算就会在 125% 屏上把面板推到光标的 1.25 倍处（实测偏 119px）。
         # 曾经因为探针进程 DPI-unaware、GetWindowRect 返回虚拟化坐标，
@@ -432,8 +465,8 @@ class ActionPanel(QWidget):
         items = ([item for values in groups.values() for item in values if item.matches(keyword)]
                  if keyword else groups.get(self._active_group, []))
         dpr = self._dpr_at(self._mouse_pos.x(), self._mouse_pos.y())
-        screen = QApplication.screenAt(QPoint(round(self._mouse_pos.x() / dpr), round(self._mouse_pos.y() / dpr))) or QApplication.primaryScreen()
-        available = screen.availableGeometry().height() if screen else 768
+        work_area = self._work_area_at(self._mouse_pos.x(), self._mouse_pos.y())
+        available = max(1, round(work_area[3] / dpr))
         tab_rows = self.tab_layout.rowCount()
         rows = max(1, min(self._max_rows, (available - 250 - tab_rows * 40) // (self._cell_h + 4)))
         # A small category must not collapse the shared viewport while another
@@ -471,8 +504,9 @@ class ActionPanel(QWidget):
             self._refresh_tabs()
             return
         self.pager.hide()
-        screen = QApplication.primaryScreen()
-        available = screen.availableGeometry().height() if screen else 768
+        dpr = self._dpr_at(self._mouse_pos.x(), self._mouse_pos.y())
+        work_area = self._work_area_at(self._mouse_pos.x(), self._mouse_pos.y())
+        available = max(1, round(work_area[3] / dpr))
         self.scroll.setFixedHeight(min(self._max_rows * (self._cell_h + 4), max(80, available - 210)))
         if self._cached_groups is None:
             self._cached_groups = self._collect()
