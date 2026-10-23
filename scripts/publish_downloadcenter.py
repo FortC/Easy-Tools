@@ -144,7 +144,7 @@ def commit_local_archive(source, version, published_at, manifest):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("version", help="已申请的 DownloadCenter 唯一版本号")
+    parser.add_argument("version", help="Easy-Tools 本地产品版本号，例如 0.4.1")
     parser.add_argument("release_folder", type=Path, help="已验证的 Easy-Tools 目录包（含 Easy-Tools.exe）")
     parser.add_argument("--rollout-percent", type=int, default=100)
     parser.add_argument("--notes", default="")
@@ -156,9 +156,13 @@ def main():
     source = args.release_folder.resolve()
     if not source.is_dir() or not (source / "Easy-Tools.exe").is_file():
         parser.error("release_folder 必须是包含 Easy-Tools.exe 的最终目录包")
-    token = os.environ.get("DOWNLOADCENTER_TOKEN", "")
-    if len(token) < 32:
-        parser.error("请在当前进程环境中设置 DOWNLOADCENTER_TOKEN；不要把令牌写入脚本或参数")
+    company_token = os.environ.get("DOWNLOADCENTER_COMPANY_TOKEN", "")
+    cloud_token = os.environ.get("DOWNLOADCENTER_CLOUD_TOKEN", "")
+    if len(company_token) < 32 or len(cloud_token) < 32:
+        parser.error(
+            "请分别在当前进程环境中设置 DOWNLOADCENTER_COMPANY_TOKEN 和 "
+            "DOWNLOADCENTER_CLOUD_TOKEN；不要把令牌写入脚本或参数"
+        )
     if not COMPANY_CA.is_file():
         parser.error(f"缺少公司节点 TLS 信任证书：{COMPANY_CA}")
 
@@ -168,8 +172,8 @@ def main():
     if args.release_type:
         manifest["release_type"] = args.release_type
 
-    company = API(COMPANY_URL, str(COMPANY_CA), token)
-    cloud = API(CLOUD_URL, token=token)
+    company = API(COMPANY_URL, str(COMPANY_CA), company_token)
+    cloud = API(CLOUD_URL, token=cloud_token)
     # Publish and verify each independent node explicitly. A partial success is
     # reported and can be retried idempotently if the existing manifest matches.
     node_errors = []
