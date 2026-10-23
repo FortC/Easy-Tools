@@ -28,7 +28,7 @@ class QuestionBankPage(QWidget):
         self._metadata_pending = set()
         self._pending_bank_id = None
         layout = QVBoxLayout(self)
-        intro = QLabel("知识库仅支持 Excel（.xlsx / .xlsm），最多启用 3 个。优先读取正确答案列。\n选中知识库可配置题目、题型、正确答案、答案内容及 A～H 选项列；配置后点击底部“保存并立即生效”。")
+        intro = QLabel("最多启用 3 个知识库。Excel（.xlsx / .xlsm）支持配置题目、题型、正确答案及选项内容列；Word（.docx）自动检索正文段落和表格，并由当前模型根据相关内容回答，不配置答案列。.doc 请先另存为 .docx。")
         intro.setWordWrap(True)
         intro.setObjectName("HintLabel")
         layout.addWidget(intro)
@@ -41,7 +41,7 @@ class QuestionBankPage(QWidget):
         add.clicked.connect(self.add_banks)
         remove = self.remove_button = QPushButton("移除选中")
         remove.clicked.connect(self.remove_selected)
-        configure = self.configure_button = QPushButton("配置题型 / 答案列")
+        configure = self.configure_button = QPushButton("配置 Excel 答案列")
         configure.clicked.connect(self.configure_selected)
         bar.addWidget(add)
         bar.addWidget(configure)
@@ -51,7 +51,7 @@ class QuestionBankPage(QWidget):
         bar.addWidget(self.count_label)
         layout.addLayout(bar)
         self.table = QTableWidget(0, 5, self)
-        self.table.setHorizontalHeaderLabels(["启用", "知识库名称", "问答数", "答案列", "文件路径"])
+        self.table.setHorizontalHeaderLabels(["启用", "知识库名称", "条目/片段数", "答案列 / 类型", "文件路径"])
         self.table.cellDoubleClicked.connect(lambda row, col: self.configure_selected(row) if col == 3 else None)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.ExtendedSelection)
@@ -79,7 +79,7 @@ class QuestionBankPage(QWidget):
     def set_rows(self, rows):
         self._rows = [dict(row) for row in (rows or [])]
         for bank in self._rows:
-            if Path(str(bank.get("path", ""))).suffix.lower() not in {".xlsx", ".xlsm"}:
+            if Path(str(bank.get("path", ""))).suffix.lower() not in {".xlsx", ".xlsm", ".docx"}:
                 bank["enabled"] = False
         self._render()
         self._request_metadata()
@@ -93,7 +93,9 @@ class QuestionBankPage(QWidget):
             cb.setObjectName("BankEnabledCheck")
             cb.setToolTip("启用此知识库用于截图、文本和 OCR 问答")
             cb.setChecked(bool(bank.get("enabled")))
-            cb.setEnabled(Path(str(bank.get("path", ""))).suffix.lower() in {".xlsx", ".xlsm"})
+            is_excel = Path(str(bank.get("path", ""))).suffix.lower() in {".xlsx", ".xlsm"}
+            supported = is_excel or Path(str(bank.get("path", ""))).suffix.lower() == ".docx"
+            cb.setEnabled(supported)
             cb.stateChanged.connect(lambda state, row=r: self._toggle(row, state))
             holder = QWidget()
             h = QHBoxLayout(holder)
@@ -106,7 +108,10 @@ class QuestionBankPage(QWidget):
             mappings = bank.get("column_mapping") or {}
             meta = self._metadata_cache.get(str(bank.get("path")), {})
             names, details = [], []
-            if mappings:
+            if Path(str(bank.get("path", ""))).suffix.lower() == ".docx":
+                summary = "Word 文档检索"
+                tooltip = "本机读取正文标题、段落和表格；检索到相关片段后由 AI 依据原文回答。无需配置答案列。"
+            elif mappings:
                 for sheet, mapping in mappings.items():
                     if mapping.get("enabled", True) is False:
                         continue
@@ -131,8 +136,9 @@ class QuestionBankPage(QWidget):
                     if label not in names:
                         names.append(label)
                     details.append(f"{sheet}：{label}")
-            summary = "、".join(names) or "自动识别正确答案列"
-            tooltip = "\n".join(details) + "\n双击配置列映射（后台读取文件）"
+            if Path(str(bank.get("path", ""))).suffix.lower() != ".docx":
+                summary = "、".join(names) or "自动识别正确答案列"
+                tooltip = "\n".join(details) + "\n双击配置列映射（后台读取文件）"
             answer_item = QTableWidgetItem(summary)
             answer_item.setToolTip(tooltip)
             answer_item.setFlags(answer_item.flags() & ~Qt.ItemIsEditable)
@@ -152,7 +158,7 @@ class QuestionBankPage(QWidget):
     def _request_metadata(self):
         paths = [str(Path(bank.get("path", "")).resolve()) for bank in self._rows
                  if bank.get("path") and Path(str(bank.get("path"))).is_file()
-                 and Path(str(bank.get("path"))).suffix.lower() in {".xlsx", ".xlsm"}
+                 and Path(str(bank.get("path"))).suffix.lower() in {".xlsx", ".xlsm", ".docx"}
                  and str(Path(bank.get("path")).resolve()) not in self._metadata_cache
                  and str(Path(bank.get("path")).resolve()) not in self._metadata_pending]
         if not paths:
@@ -163,7 +169,11 @@ class QuestionBankPage(QWidget):
             result = {}
             for path in paths:
                 try:
-                    result[path] = inspect_excel_bank(path)
+                    if Path(path).suffix.lower() == ".docx":
+                        entries = load_question_bank(path)
+                        result[path] = {"kind": "document", "entry_count": len(entries)}
+                    else:
+                        result[path] = inspect_excel_bank(path)
                 except Exception:
                     result[path] = {}
             return result
@@ -176,6 +186,11 @@ class QuestionBankPage(QWidget):
         if error or not result:
             return
         self._metadata_cache.update({path: value for path, value in result.items() if value})
+        for bank in self._rows:
+            path = str(Path(bank.get("path", "")).resolve())
+            metadata = result.get(path, {})
+            if metadata.get("kind") == "document":
+                bank.setdefault("entry_count", metadata.get("entry_count", 0))
         self._render()
 
     def _path_context_menu(self, pos) -> None:
@@ -221,7 +236,8 @@ class QuestionBankPage(QWidget):
     def add_banks(self):
         if self._busy:
             return
-        files, _ = QFileDialog.getOpenFileNames(self, "添加知识库", "", "Excel 知识库 (*.xlsx *.xlsm)")
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "添加知识库", "", "知识库文档 (*.xlsx *.xlsm *.docx);;Excel 知识库 (*.xlsx *.xlsm);;Word 文档 (*.docx)")
         existing = {str(Path(x.get("path", "")).absolute()).lower() for x in self._rows}
         files = list(dict.fromkeys(f for f in files if str(Path(f).absolute()).lower() not in existing))
         if not files:
@@ -234,12 +250,17 @@ class QuestionBankPage(QWidget):
                 path = Path(filename).resolve()
                 bank = {"id": uuid.uuid4().hex, "name": path.stem, "path": str(path), "enabled": False}
                 try:
-                    metadata = inspect_excel_bank(path)
-                    try:
+                    if path.suffix.lower() == ".docx":
                         bank["entry_count"] = len(load_question_bank(path))
+                        metadata = {"kind": "document", "entry_count": bank["entry_count"]}
                         needs_mapping = False
-                    except ValueError:
-                        needs_mapping = True
+                    else:
+                        metadata = inspect_excel_bank(path)
+                        try:
+                            bank["entry_count"] = len(load_question_bank(path))
+                            needs_mapping = False
+                        except ValueError:
+                            needs_mapping = True
                     out.append((bank, metadata, needs_mapping, ""))
                 except Exception as exc:
                     out.append((bank, {}, False, str(exc)))
@@ -273,10 +294,13 @@ class QuestionBankPage(QWidget):
         if type(row) is not int:
             row = self.table.currentRow()
         if row < 0 or row >= len(self._rows):
-            QMessageBox.information(self, "配置列", "请先选择一个 Excel 知识库。")
+            QMessageBox.information(self, "配置 Excel 答案列", "请先选择一个 Excel 知识库。Word 文档会自动检索正文，无需配置答案列。")
             return
         self.collect()
         bank = dict(self._rows[row])
+        if Path(str(bank.get("path", ""))).suffix.lower() == ".docx":
+            QMessageBox.information(self, "Word 文档知识库", "Word 文档直接检索正文段落和表格，再由 AI 根据相关片段回答，不需要配置答案列。")
+            return
         self._pending_bank_id = bank.get("id")
         self._set_busy(True, "后台读取表头中…")
         path = bank["path"]

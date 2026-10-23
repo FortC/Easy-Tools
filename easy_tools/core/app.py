@@ -25,7 +25,8 @@ from .context import ContextResolver
 from .hooks import HookManager
 from .log import get_logger
 from .ocr import OcrService
-from .question_bank import QuestionAnswerService, verified_bank_answer, strip_choice_labels
+from .question_bank import (QuestionAnswerService, verified_bank_answer,
+                            strip_choice_labels)
 from .ccswitch import CCSwitchModel
 from .builtin_model import BuiltinModel
 from .tasks import TaskManager
@@ -134,6 +135,8 @@ class AppService:
 
     def answer_question(self, prompt: str, evidence: list[dict] | None = None) -> str:
         """Route a single-turn question to the embedded local model or CC Switch."""
+        if not evidence and self.question_answer.requires_document_evidence():
+            raise RuntimeError("当前启用的 Word 知识库中没有检索到足够相关的片段，请换用文档中的关键词或更具体地描述问题。")
         if evidence and (evidence[0].get("match_warning") or evidence[0].get("answer_content_missing")):
             return str(evidence[0]["answer"])
         verified = verified_bank_answer(evidence)
@@ -142,7 +145,8 @@ class AppService:
         cfg = self.store.section("llm", {})
         if not cfg.get("enabled", True):
             raise RuntimeError("请先在配置中心启用问答功能。")
-        if cfg.get("answer_content_only", False) and evidence:
+        if (cfg.get("answer_content_only", False) and evidence
+                and not any(item.get("kind") == "document" for item in evidence)):
             prompt += "\n只输出正确答案的内容，不输出选项字母或知识库的 A/B/C/D 序号；选项可能已重新排列。"
         if cfg.get("provider", "builtin") == "ccswitch":
             answer = self.ccswitch_model.answer(

@@ -191,13 +191,17 @@ class CaptureOverlay(QWidget):
                 if self._ask_question:
                     try:
                         result = self._service.question_answer.answer(text)
-                        details = "\n".join(
-                            f"{m['source']} · {m['row']} · 答案列：{m.get('answer_column') or '答案'}\n题目：{m['question']}"
-                            for m in result.get("matches", []))
+                        from ..core.question_bank import format_match_sources, prefers_original_answer
+                        matches = result.get("matches", [])
+                        details = format_match_sources(matches)
                         answer = result.get("answer", "")
                         llm_cfg = self._service.store.section("llm", {})
+                        if not llm_cfg.get("enabled", True) and any(
+                                m.get("kind") == "document" for m in matches):
+                            details = ("未启用 AI 模型，当前显示匹配到的 Word 原文片段。\n" + details).strip()
                         if (llm_cfg.get("enabled", True)
                                 and not (result.get("matched")
+                                         and prefers_original_answer(matches)
                                          and llm_cfg.get("prefer_bank_answer", True))):
                             try:
                                 answer = self._service.answer_question(
@@ -206,7 +210,10 @@ class CaptureOverlay(QWidget):
                                 if not result.get("matched"):
                                     answer = str(exc)
                                 else:
-                                    details = ("模型不可用，已回退知识库原答案。\n" + details).strip()
+                                    fallback = ("模型不可用，已回退知识库原答案。"
+                                                if prefers_original_answer(matches) else
+                                                "模型不可用，先显示匹配到的 Word 原文片段。")
+                                    details = (fallback + "\n" + details).strip()
                         self.answer_ready.emit(text, answer, details)
                     except Exception as exc:
                         log.exception("截图知识库检索失败")

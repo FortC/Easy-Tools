@@ -257,11 +257,11 @@ def main() -> int:
         def worker() -> None:
             try:
                 matches = service.question_answer.retrieve(prompt)
-                details = "\n".join(
-                    f"{m['source']} · {m['row']} · 答案列：{m.get('answer_column') or '答案'}\n题目：{m['question']}"
-                    for m in matches)
+                from easy_tools.core.question_bank import format_match_sources, prefers_original_answer
+                details = format_match_sources(matches)
                 llm_cfg = service.store.section("llm", {})
-                if matches and llm_cfg.get("prefer_bank_answer", True):
+                if (matches and prefers_original_answer(matches)
+                        and llm_cfg.get("prefer_bank_answer", True)):
                     bridge.model_answer_ready.emit(
                         prompt, matches[0]["answer"], "直接返回题库原答案。\n" + details)
                     return
@@ -270,7 +270,9 @@ def main() -> int:
                 except Exception as exc:
                     if matches:
                         answer = matches[0]["answer"]
-                        details = ("模型不可用，已回退题库原答案。\n" + details).strip()
+                        fallback = ("模型不可用，已回退题库原答案。" if prefers_original_answer(matches)
+                                    else "模型不可用，先显示匹配到的 Word 原文片段。")
+                        details = (fallback + "\n" + details).strip()
                     else:
                         answer = str(exc)
                 bridge.model_answer_ready.emit(prompt, answer, details)
