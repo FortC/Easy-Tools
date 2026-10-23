@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError
@@ -22,9 +23,9 @@ COMPANY_URL = "https://192.168.99.206:9443"
 CLOUD_URL = "https://www.clblog.online:9443"
 APP = "easy-tools"
 PLATFORM = "windows-x64"
-CHANNEL = "stable"
+CHANNEL = "installer"
 KEEP_RELEASES = 3
-ARCHIVE_ROOT = ROOT / "release-artifacts"
+ARCHIVE_ROOT = ROOT / "release-artifacts" / "installers"
 COMPANY_CA = DOWNLOADCENTER_ROOT / "deploy" / "server.crt"
 
 
@@ -145,7 +146,7 @@ def commit_local_archive(source, version, published_at, manifest):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", help="Easy-Tools 本地产品版本号，例如 0.4.1")
-    parser.add_argument("release_folder", type=Path, help="已验证的 Easy-Tools 目录包（含 Easy-Tools.exe）")
+    parser.add_argument("installer", type=Path, help="Easy-Tools Lite 单文件 EXE 安装器")
     parser.add_argument("--rollout-percent", type=int, default=100)
     parser.add_argument("--notes", default="")
     parser.add_argument("--release-type", choices=("major", "minor", "fix"))
@@ -153,9 +154,12 @@ def main():
     if not (0 <= args.rollout_percent <= 100):
         parser.error("--rollout-percent 必须介于 0 和 100")
     version = valid_name(args.version)
-    source = args.release_folder.resolve()
-    if not source.is_dir() or not (source / "Easy-Tools.exe").is_file():
-        parser.error("release_folder 必须是包含 Easy-Tools.exe 的最终目录包")
+    installer = args.installer.resolve()
+    if not installer.is_file() or installer.name != f"Easy-Tools-Setup-{version}-Lite.exe":
+        parser.error("必须提供与版本号一致的 Easy-Tools-Setup-<版本>-Lite.exe 安装器")
+    staging = tempfile.TemporaryDirectory(prefix="easy-tools-installer-")
+    source = Path(staging.name)
+    shutil.copy2(installer, source / installer.name)
     company_token = os.environ.get("DOWNLOADCENTER_COMPANY_TOKEN", "")
     cloud_token = os.environ.get("DOWNLOADCENTER_CLOUD_TOKEN", "")
     if len(company_token) < 32 or len(cloud_token) < 32:
