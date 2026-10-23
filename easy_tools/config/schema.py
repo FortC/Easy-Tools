@@ -39,6 +39,7 @@ _ACTION_KINDS = {
     "chain.run", "system.settings", "system.reload", "ocr.copy_text", "llm.ask",
     "system.window_min", "system.window_restore",
     "screen.capture",
+    "office.macro",
 }
 
 _TRIGGER_TYPES = {"manual", "hotkey", "window_switch", "clipboard_change", "timer"}
@@ -129,6 +130,14 @@ def normalize(cfg: Dict[str, Any]) -> Dict[str, Any]:
 def validate(cfg: Dict[str, Any]) -> List[str]:
     """返回错误列表；空列表表示通过。绝不抛异常——配置中心要能展示错误。"""
     errs: List[str] = []
+    from ..core.reminders import validate_reminders
+    errs.extend(validate_reminders(cfg.get('reminders', [])))
+    performance = cfg.get('performance', {})
+    idle = performance.get('model_idle_minutes', 5)
+    if not isinstance(idle, int) or not 1 <= idle <= 120:
+        errs.append('离线模型空闲释放时间必须为 1～120 分钟')
+    if not isinstance(performance.get('reduce_effects', True), bool):
+        errs.append('减少视觉特效必须是开关值')
 
     for sec in REQUIRED_SECTIONS:
         if sec not in cfg:

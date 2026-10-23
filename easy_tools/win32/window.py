@@ -96,6 +96,12 @@ def get_foreground() -> WindowInfo:
     )
 
 
+def process_id(hwnd: int) -> int:
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return int(pid.value)
+
+
 def cursor_pos() -> Tuple[int, int]:
     p = api.POINT()
     if not user32.GetCursorPos(ctypes.byref(p)):

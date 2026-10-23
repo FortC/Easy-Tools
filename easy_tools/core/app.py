@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import copy
 from typing import Any, Callable, Dict, List, Optional
 
 from ..win32 import window as w32
@@ -27,6 +28,7 @@ from .ocr import OcrService
 from .question_bank import QuestionAnswerService, verified_bank_answer, strip_choice_labels
 from .ccswitch import CCSwitchModel
 from .builtin_model import BuiltinModel
+from .tasks import TaskManager
 
 log = get_logger("app")
 
@@ -60,6 +62,7 @@ class AppService:
         self.ccswitch_model = CCSwitchModel()
         self.builtin_model = BuiltinModel()
         self.runner = ChainRunner(self.store)
+        self.tasks = TaskManager()
         self.hooks: Optional[HookManager] = None
         self._ui_callbacks: Dict[str, Callable] = {}
         self._last_window = (0, 0)
@@ -106,10 +109,16 @@ class AppService:
         self.ocr.start_worker()
         self._start_window_watcher()
         log.info("钩子状态：%s", status)
+        from .reminders import ReminderScheduler
+        self.scheduler = ReminderScheduler(self.store, lambda text: self._ui_callbacks.get('remind', lambda _: None)(text))
+        self.scheduler.start()
         return status
 
     def stop(self) -> None:
         self._watch_stop.set()
+        self.tasks.shutdown()
+        if getattr(self, 'scheduler', None):
+            self.scheduler.stop()
         self.ocr.stop_worker()
         watcher = self._watcher
         if watcher and watcher is not threading.current_thread():
@@ -196,6 +205,7 @@ class AppService:
         def loop() -> None:
             while not self._watch_stop.wait(0.35):
                 try:
+                    self.builtin_model.release_if_idle(60 * max(1, min(120, int(self.store.section('performance', {}).get('model_idle_minutes', 5)))))
                     fg = w32.get_foreground()
                     key = (fg.hwnd, fg.process)
                     if key != self._last_window:
@@ -220,9 +230,7 @@ class AppService:
             if procs and fg.process not in procs:
                 continue
             log.info("触发事件链（窗口切换）：%s", chain.get("name"))
-            threading.Thread(target=self.runner.run_chain,
-                             args=(chain, self.action_context()),
-                             daemon=True).start()
+            self.run_chain_definition(chain)
 
     # ------------------------------------------------------------ 面板数据
     def public_groups(self) -> Dict[str, List[PanelItem]]:
@@ -284,15 +292,19 @@ class AppService:
             return ActionResult.failure("动作不存在：%s" % action_id)
         kind = action.get("kind", "")
         params = dict(action.get("params") or {})
+        runner = ChainRunner(self.store)
+        context = replace(self.action_context(), chain_runner=runner,
+                          target_hwnd=focus.target_hwnd(), target_pid=w32.process_id(focus.target_hwnd() or 0))
 
         def _run() -> ActionResult:
-            return action_base.run_action(kind, self.action_context(), params)
+            return action_base.run_action(kind, context, params)
 
         if not background:
             return _run()
         out: Dict[str, ActionResult] = {}
 
-        def worker() -> None:
+        def worker(cancel) -> ActionResult:
+            context.cancel_event = cancel
             try:
                 r = _run()
             except Exception as e:                  # noqa: BLE001
@@ -309,7 +321,7 @@ class AppService:
                     except Exception:
                         log.exception("notify 回调异常")
             elif not r.ok:
-                log.warning("动作「%s」失败：%s", action.get("name", action_id), r.message)
+                log.warning("动作执行失败 id=%s", action_id)
                 notify = self._ui_callbacks.get("notify")
                 if notify:
                     try:
@@ -319,21 +331,35 @@ class AppService:
                         log.exception("notify 回调异常")
             else:
                 log.info("动作「%s」：%s", action.get("name", action_id), r.message)
+            return r
 
-        threading.Thread(target=worker, name="action-%s" % action_id, daemon=True).start()
+        task_id = self.tasks.submit(action.get('name', action_id), worker,
+                                    key='action:' + action_id, cancel=runner.cancel)
+        if not task_id:
+            return ActionResult.failure("任务已在执行或队列已满，请在运行任务中查看")
         return ActionResult(True, "已开始执行 %s" % action.get("name", action_id))
 
-    def run_chain(self, chain_id: str, background: bool = True) -> None:
+    def run_chain(self, chain_id: str, background: bool = True):
         chain = self.runner.find_chain(chain_id)
         if chain is None:
             log.warning("事件链不存在：%s", chain_id)
             return
+        return self.run_chain_definition(chain, background=background)
+
+    def run_chain_definition(self, chain, *, background=True):
+        chain = copy.deepcopy(chain)
+        runner = ChainRunner(self.store)
+        context = replace(self.action_context(), chain_runner=runner,
+                          target_hwnd=focus.target_hwnd(), target_pid=w32.process_id(focus.target_hwnd() or 0))
         if not background:
-            self.runner.run_chain(chain, self.action_context())
-            return
-        threading.Thread(target=self.runner.run_chain,
-                         args=(chain, self.action_context()),
-                         name="chain-%s" % chain_id, daemon=True).start()
+            return runner.run_chain(chain, context)
+
+        def work(cancel):
+            context.cancel_event = cancel
+            return runner.run_chain(chain, context)
+
+        return self.tasks.submit(chain.get('name', '工作流'), work,
+                                 key='chain:' + str(chain.get('id')), cancel=runner.cancel)
 
     # ------------------------------------------------------------ 托盘状态
     def status_text(self) -> str:

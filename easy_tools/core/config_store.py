@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import os
 import tempfile
 import threading
@@ -39,6 +40,7 @@ class ConfigStore:
     def __init__(self, path: Optional[Path] = None) -> None:
         self._path = Path(path) if path else config_path()
         self._lock = threading.RLock()
+        self._update_lock = threading.RLock()
         self._cfg: Dict[str, Any] = schema.normalize({})
         self._handlers: List[ChangeHandler] = []
         self._mtime: float = 0.0
@@ -71,11 +73,11 @@ class ConfigStore:
         想落盘必须走 update()/save()，避免"改了没保存"的幽灵状态。
         """
         with self._lock:
-            return json.loads(json.dumps(self._cfg))
+            return copy.deepcopy(self._cfg)
 
     def section(self, name: str, default: Any = None) -> Any:
         with self._lock:
-            return json.loads(json.dumps(self._cfg.get(name, default)))
+            return copy.deepcopy(self._cfg.get(name, default))
 
     # ---------------------------------------------------------------- 事件
     def subscribe(self, handler: ChangeHandler) -> Callable[[], None]:
@@ -92,7 +94,7 @@ class ConfigStore:
     def _broadcast(self) -> None:
         with self._lock:
             handlers = list(self._handlers)
-            snapshot = json.loads(json.dumps(self._cfg))
+            snapshot = copy.deepcopy(self._cfg)
         for h in handlers:
             try:
                 h(snapshot)
@@ -101,6 +103,17 @@ class ConfigStore:
 
     # ---------------------------------------------------------------- 写
     def update(self, cfg: Dict[str, Any], *, persist: bool = True, validate: bool = True) -> List[str]:
+        with self._update_lock:
+            return self._update(cfg, persist=persist, validate=validate)
+
+    def mutate(self, change, *, persist=True):
+        """Serialize read/modify/write for scheduler and other small updates."""
+        with self._update_lock:
+            cfg = self.get()
+            change(cfg)
+            return self._update(cfg, persist=persist)
+
+    def _update(self, cfg: Dict[str, Any], *, persist: bool = True, validate: bool = True) -> List[str]:
         """整体替换配置。返回错误列表；非空表示**未生效**。
 
         顺序：normalize -> validate -> 落盘 -> 广播。
@@ -172,6 +185,17 @@ class ConfigStore:
             return [f"JSON 解析失败：{e}"]
         if not isinstance(raw, dict):
             return ["配置根节点必须是对象"]
+        def revoke(value):
+            if isinstance(value, dict):
+                if value.get('type') == 'python' or 'trusted_hash' in value:
+                    value['trusted'] = False
+                    value.pop('trusted_hash', None)
+                for child in value.values():
+                    revoke(child)
+            elif isinstance(value, list):
+                for child in value:
+                    revoke(child)
+        revoke(raw)
         return self.update(raw)
 
     # ---------------------------------------------------------------- 文件监听

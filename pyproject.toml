@@ -1,0 +1,22 @@
+[project]
+name = "easy-tools"
+version = "0.4.0"
+description = "Windows desktop office tools, private workflow automation and local reminders"
+requires-python = ">=3.10"
+authors = [{ name = "clb", email = "lamthebest@foxmail.com" }]
+license = "Apache-2.0"
+readme = "README.md"
+dependencies = ["PySide6>=6.6", "openpyxl>=3.1"]
+
+[project.urls]
+Repository = "https://github.com/FortC/Easy-Tools"
+Issues = "https://github.com/FortC/Easy-Tools/issues"
+
+[tool.setuptools.packages.find]
+include = ["easy_tools*"]
+
+[tool.setuptools.package-data]
+easy_tools = ["config/defaults.json", "ui/icons/*.svg", "ui/assets/*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

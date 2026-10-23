@@ -24,6 +24,8 @@ class BuiltinModel:
         self._port = 0
         self._stop_requested = threading.Event()
         self._answer_gate = threading.Lock()
+        self._job = None
+        self._last_used = 0.0
 
     def assets(self) -> dict:
         root = resource_root()
@@ -41,6 +43,29 @@ class BuiltinModel:
             raise RuntimeError("内置模型正在处理上一条提问，请等待完成后再试。")
         try:
             return self._answer(prompt, evidence)
+        finally:
+            self._last_used = time.monotonic()
+            self._answer_gate.release()
+
+    def release_if_idle(self, seconds=300):
+        """Release model memory without disabling the next on-demand start."""
+        if not self._last_used or time.monotonic() - self._last_used < seconds:
+            return
+        if not self._answer_gate.acquire(False):
+            return
+        try:
+            if not self._lock.acquire(False):
+                return
+            try:
+                if self._job:
+                    self._job.close()
+                    self._job = None
+                process, self._process = self._process, None
+                if process and process.poll() is None:
+                    process.kill()
+                self._last_used = 0
+            finally:
+                self._lock.release()
         finally:
             self._answer_gate.release()
 
@@ -81,6 +106,8 @@ class BuiltinModel:
             if not assets["available"]:
                 missing = "模型权重" if not assets["model"] else "llama.cpp 运行时"
                 raise RuntimeError("内置离线模型缺少%s，请重新安装完整安装包。" % missing)
+            from .runtime import prepare_model_runtime
+            runtime_path = prepare_model_runtime(assets['runtime_path'])
             if self._process and self._process.poll() is None:
                 if self._ready(self._port):
                     return f"http://127.0.0.1:{self._port}"
@@ -93,16 +120,19 @@ class BuiltinModel:
                 sock.bind(("127.0.0.1", 0))
                 self._port = sock.getsockname()[1]
             log_path = Path(os.environ.get("TEMP", str(Path.home()))) / "easy-tools-llama.log"
-            args = [assets["runtime_path"], "--model", assets["model_path"],
+            args = [runtime_path, "--model", assets["model_path"],
                     "--alias", "easy-tools-smollm2", "--host", "127.0.0.1",
                     "--port", str(self._port), "--ctx-size", "2048",
                     "--parallel", "1", "--batch-size", "128", "--ubatch-size", "128",
                     "--n-predict", "512", "--threads", str(max(1, min(2, (os.cpu_count() or 2) - 1))),
-                    "--no-webui"]
+                    "--no-webui", '--log-disable']
             try:
                 with log_path.open("ab") as log_file:
-                    self._process = subprocess.Popen(
-                        args, cwd=str(Path(assets["runtime_path"]).parent),
+                    from .process_job import spawn_worker
+                    if self._job:
+                        self._job.close()
+                    self._process, self._job = spawn_worker(
+                        args, cwd=str(Path(runtime_path).parent),
                         stdin=subprocess.DEVNULL, stdout=log_file,
                         stderr=subprocess.STDOUT, creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0)
                                        | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)))
@@ -134,6 +164,8 @@ class BuiltinModel:
         # Never acquire the server-start lock here: startup can take 90 seconds.
         # This method is called by the GUI while quitting.
         self._stop_requested.set()
+        if self._job:
+            self._job.close()
         process = self._process
         if process and process.poll() is None:
             try:

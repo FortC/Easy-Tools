@@ -217,9 +217,13 @@ def _installed_path(root: Path, name: str) -> Path:
     return p
 
 
-def stage_update(manifest: dict, progress=None) -> dict:
+def stage_update(manifest: dict, progress=None, cancel=None) -> dict:
     """Fetch and reconstruct into APPDATA; installed program files stay untouched."""
     refs = _validate_manifest(manifest)
+    def checkpoint():
+        if cancel is not None and cancel.is_set():
+            raise RuntimeError('更新下载已停止')
+    checkpoint()
     data = data_dir().resolve()
     install = app_root().resolve()
     cache = data / "updates" / "chunks"
@@ -234,6 +238,7 @@ def stage_update(manifest: dict, progress=None) -> dict:
             available_paths.append(p)
     for path in available_paths:
         for block in _chunks(path):
+            checkpoint()
             h = hashlib.sha256(block).hexdigest()
             if h in refs:
                 target = cache / h
@@ -249,6 +254,7 @@ def stage_update(manifest: dict, progress=None) -> dict:
     api = UpdateAPI()
     missing = []
     for h, size in refs.items():
+        checkpoint()
         path = cache / h
         intact = False
         try:
@@ -260,6 +266,7 @@ def stage_update(manifest: dict, progress=None) -> dict:
     total_download = sum(refs[h] for h in missing)
     downloaded = 0
     for index, h in enumerate(missing, 1):
+        checkpoint()
         block = api.request("/v1/blobs/" + h, binary=True)
         if len(block) != refs[h] or hashlib.sha256(block).hexdigest() != h:
             raise ValueError("下载内容 SHA-256 校验失败")
@@ -274,17 +281,22 @@ def stage_update(manifest: dict, progress=None) -> dict:
     root = data / "updates" / "staged"
     root.mkdir(parents=True, exist_ok=True)
     target = root / manifest["version"]
+    if (root.is_symlink() or data not in root.resolve().parents or target.is_symlink()
+            or target.resolve().parent != root.resolve()):
+        raise ValueError('更新暂存目录越界，已停止')
     if target.exists():
         import shutil
         shutil.rmtree(target)
     target.mkdir()
     try:
         for index, f in enumerate(manifest["files"], 1):
+            checkpoint()
             out = _installed_path(target.resolve(), f["path"])
             out.parent.mkdir(parents=True, exist_ok=True)
             digest, written = hashlib.sha256(), 0
             with out.open("xb") as stream:
                 for part in f["chunks"]:
+                    checkpoint()
                     block = (cache / part["sha256"]).read_bytes()
                     stream.write(block)
                     digest.update(block)

@@ -259,6 +259,15 @@ def settings_qss() -> str:
     QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
     QFrame#SettingsFooter { background: #ffffff; border-top: 1px solid #e1e6ef; }
     QLabel#SettingsStatus { color: #475569; padding-left: 8px; }
+    QLabel#TaskTitle { font-size: 20px; font-weight: 600; color: #172d4c; padding: 4px 0; }
+    QLabel#PrivacyStatus { color: #235c47; background: #eaf5ee; padding: 10px; border-radius: 7px; }
+    QListWidget#OfficeToolList { border: none; background: transparent; outline: none; }
+    QListWidget#OfficeToolList::item { background: #ffffff; border: 1px solid #e0e6ef; border-radius: 8px; padding: 8px 12px; }
+    QListWidget#OfficeToolList::item:hover { background: #f4f8ff; border-color: #b3c7e8; }
+    QListWidget#OfficeToolList::item:selected { background: #eaf1ff; border-color: #2458c5; color: #172d4c; }
+    QTreeWidget#WorkflowSteps { background: #f7f9fc; border: 1px solid #e0e6ef; border-radius: 8px; outline: none; }
+    QTreeWidget#WorkflowSteps::item { padding: 10px 5px; border-bottom: 1px solid #e9edf4; }
+    QTreeWidget#WorkflowSteps::item:selected { background: #eaf1ff; color: #173b75; }
     QScrollBar:vertical { background: transparent; width: 9px; margin: 3px; }
     QScrollBar::handle:vertical { background: #cbd4e1; border-radius: 4px; min-height: 25px; }
     QScrollBar::add-line, QScrollBar::sub-line { height: 0; }

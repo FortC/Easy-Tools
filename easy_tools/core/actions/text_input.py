@@ -26,7 +26,7 @@ from .base import ActionContext, ActionResult, register
 
 log = get_logger("text_input")
 
-_type_lock = threading.Lock()
+from ..automation import input_lock as _type_lock
 
 
 def resolve_mode(params: dict, cfg: dict) -> str:
@@ -53,12 +53,17 @@ def inject(text: str, mode: str, cfg: dict, ctx: Optional[ActionContext] = None)
     if not _type_lock.acquire(blocking=False):
         return ActionResult.failure("上一条文本仍在输入，请先按 Esc 中断或等待完成。")
     try:
-        if cfg.get("ensure_foreground", True) and not focus.restore():
-            log.warning("焦点未切回目标窗口，仍继续注入（部分应用可能收不到）")
+        if ctx and ctx.cancel_event and ctx.cancel_event.is_set():
+            return ActionResult(False, "已取消输入", cancelled=True)
+        if ctx and ctx.target_hwnd and focus.target_hwnd() != ctx.target_hwnd:
+            return ActionResult.failure("目标窗口已变化，已停止输入；请重新选择目标")
+        if cfg.get("ensure_foreground", True) and not focus.restore_to(
+                ctx.target_hwnd if ctx else None, ctx.target_pid if ctx else None):
+            return ActionResult.failure("无法切回目标窗口，已停止输入；请重新选择目标")
         if mode == "type":
             cps = float(cfg.get("speed_cps", 20) or 20)
             jitter = int(cfg.get("jitter_ms", 40) or 0)
-            cancel = threading.Event()
+            cancel = ctx.cancel_event if ctx and ctx.cancel_event is not None else threading.Event()
             n = winput.type_text(text, cps=cps, jitter_ms=jitter, cancel=cancel)
             normalized = text.replace("\r\n", "\n").replace("\r", "\n")
             if cancel.is_set() and n < len(normalized):

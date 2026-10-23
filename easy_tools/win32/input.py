@@ -259,6 +259,7 @@ def paste_text(text: str, restore_snapshot: Optional[str] = None,
     """
     if not clipboard.set_text(text):
         return False
+    sequence = user32.GetClipboardSequenceNumber()
     time.sleep(0.02)
     hotkey("ctrl+v")
     if not restore:
@@ -268,7 +269,8 @@ def paste_text(text: str, restore_snapshot: Optional[str] = None,
     delay = max(0, int(restore_delay_ms)) / 1000.0
     if delay:
         time.sleep(delay)
-    clipboard.set_text(restore_snapshot)
+    if user32.GetClipboardSequenceNumber() == sequence:
+        clipboard.set_text(restore_snapshot)
     return True
 
 

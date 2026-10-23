@@ -9,15 +9,21 @@
 from __future__ import annotations
 
 import json
+import copy
+import hashlib
 from typing import Any, Dict, List
 
+from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog,
                                QCheckBox, QDialogButtonBox, QFormLayout, QHBoxLayout,
                                QGridLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QVBoxLayout, QWidget, QScrollArea, QGroupBox)
 
 from ..core.actions.processors import all_processors
+from .parameters import ParameterForm
+from .task_bridge import submit_task
+from .step_tree import StepTree
 
 STEP_TYPES = [
     ("action", "执行动作 / 文本处理"),
@@ -111,10 +117,30 @@ class StepEditor(QWidget):
         self.id_box.setEditable(True)
         self.id_box.setInsertPolicy(QComboBox.NoInsert)
         form.addRow("选择要执行的动作", self.id_box)
+        self.params_host = QWidget()
+        self.params_layout = QVBoxLayout(self.params_host)
+        self.params_layout.setContentsMargins(0, 0, 0, 0)
+        self.parameter_form = ParameterForm()
+        self.params_layout.addWidget(self.parameter_form)
+        form.addRow('处理选项', self.params_host)
 
         self.input_edit = QLineEdit()
         self.input_edit.setPlaceholderText("{clipboard} / {last.output} / {step2.output}")
         form.addRow("传入内容", self.input_edit)
+        self.source_box = QComboBox()
+        for label, value in [('插入内容来源…', ''), ('上一步结果', '{last.output}'),
+                             ('剪贴板（预览时使用样本）', '{clipboard}'), ('OCR 文字', '{ocr_text}')]:
+            self.source_box.addItem(label, value)
+        self.source_box.activated.connect(lambda _: self.input_edit.setText(self.source_box.currentData()) if self.source_box.currentData() else None)
+        form.addRow('快捷选择', self.source_box)
+
+        self.macro_sequence = QPlainTextEdit()
+        self.macro_sequence.setPlaceholderText('每行一个快捷键或等待，例如：\nctrl+b\nwait 0.5\nctrl+i')
+        self.macro_sequence.setMaximumHeight(120)
+        form.addRow('宏按键顺序', self.macro_sequence)
+        self.macro_trusted = QCheckBox('我已检查按键，授权对 Office/WPS 目标窗口执行')
+        self.macro_sequence.textChanged.connect(lambda: self.macro_trusted.setChecked(False))
+        form.addRow('宏运行授权', self.macro_trusted)
 
         self.python_edit = QPlainTextEdit()
         self.python_edit.setPlaceholderText(
@@ -130,6 +156,7 @@ class StepEditor(QWidget):
         self.python_trusted = QCheckBox(
             "我信任此脚本，并接受它使用当前 Windows 账户权限")
         self.python_trusted.clicked.connect(self._confirm_python_trust)
+        self.python_edit.textChanged.connect(lambda: self.python_trusted.setChecked(False))
         form.addRow("运行授权", self.python_trusted)
 
         self.var_name_edit = QLineEdit()
@@ -152,6 +179,12 @@ class StepEditor(QWidget):
         self.expr_edit = QLineEdit()
         self.expr_edit.setPlaceholderText("has_table / is_empty / contains:关键词")
         form.addRow("条件表达式", self.expr_edit)
+        self.condition_choices = QComboBox()
+        for label, expr in [('选择常用条件…', ''), ('内容为空', 'is_empty'), ('内容包含表格', 'has_table'),
+                            ('内容为数字', 'is_number'), ('总是执行', 'always'), ('包含关键词（修改后面文字）', 'contains:关键词')]:
+            self.condition_choices.addItem(label, expr)
+        self.condition_choices.activated.connect(lambda _: self.expr_edit.setText(self.condition_choices.currentData()) if self.condition_choices.currentData() else None)
+        form.addRow('常用条件', self.condition_choices)
         self.then_button = QPushButton("编辑满足条件时的步骤（0）")
         self.then_button.clicked.connect(lambda: self._edit_branch("then"))
         form.addRow("满足条件", self.then_button)
@@ -165,13 +198,31 @@ class StepEditor(QWidget):
         self.arg_edit = QPlainTextEdit()
         self.arg_edit.setPlaceholderText('高级参数（可选），JSON 格式，如 {"col": 0, "desc": true}')
         self.arg_edit.setMaximumHeight(90)
-        form.addRow("参数 args", self.arg_edit)
+        self.advanced = QGroupBox('高级参数（可选，兼容自定义配置）')
+        self.advanced.setCheckable(True)
+        self.advanced.setChecked(False)
+        advanced_layout = QVBoxLayout(self.advanced)
+        advanced_layout.addWidget(self.arg_edit)
+        self.arg_edit.hide()
+        self.advanced.toggled.connect(self.arg_edit.setVisible)
+        form.addRow('', self.advanced)
 
         self.note = QLabel("", self)
         self.note.setStyleSheet("color:#475569;font-size:11px")
         self.note.setWordWrap(True)
         form.addRow("", self.note)
 
+        self.id_box.currentIndexChanged.connect(lambda _: self._rebuild_parameters())
+        self._rebuild_parameters()
+
+    def _rebuild_parameters(self, values=None):
+        proc = all_processors().get(self.id_box.currentData())
+        defaults = proc.args if proc else {}
+        old = self.parameter_form
+        self.params_layout.removeWidget(old)
+        old.deleteLater()
+        self.parameter_form = ParameterForm(defaults, values or {})
+        self.params_layout.addWidget(self.parameter_form)
         self._sync_visibility()
 
     def _sync_visibility(self) -> None:
@@ -192,6 +243,20 @@ class StepEditor(QWidget):
         self.seconds_edit.setVisible(t == "wait")
         self.times_edit.setVisible(t == "loop")
         self.message_edit.setVisible(t == "stop")
+        macro = is_action and self.id_box.currentData() == 'office.macro'
+        self.macro_sequence.setVisible(macro)
+        self.macro_trusted.setVisible(macro)
+        self.params_host.setVisible(is_action and bool(self.parameter_form.fields))
+        self.source_box.setVisible(is_action or t == 'python')
+        self.condition_choices.setVisible(t == 'condition')
+        self.advanced.setVisible(is_action and not macro)
+        self.arg_edit.setVisible(is_action and not macro and self.advanced.isChecked())
+        form = self.layout()
+        for row in range(form.rowCount()):
+            field = form.itemAt(row, QFormLayout.FieldRole)
+            label = form.itemAt(row, QFormLayout.LabelRole)
+            if field and field.widget() and label and label.widget():
+                label.widget().setVisible(not field.widget().isHidden())
         hints = {
             "action": "可先用“复制选区”“读取剪贴板”或“OCR 抓取文字”采集输入，再用后续步骤处理。变量示例：{last.output}、{step1.output}、{var:selected_text}、{ocr_text}。",
             "python": "脚本以独立进程运行并有超时，避免脚本卡死主界面；这不是安全沙箱。获信任的脚本可读取/修改文件、访问网络、自行截图或录屏（这可能绕过 Easy-Tools 自身窗口的捕获排除）。不要运行来源不明的脚本。输入通过 input_text 传入，variables 提供事件链变量，输出写入 result 或 print()。",
@@ -208,6 +273,9 @@ class StepEditor(QWidget):
         t = str(self._step.get("type", "action"))
         self.type_box.blockSignals(True)
         type_index = self.type_box.findData(t)
+        if type_index < 0:
+            self.type_box.addItem('不支持的步骤（保留，请修复）', t)
+            type_index = self.type_box.count() - 1
         self.type_box.setCurrentIndex(type_index if type_index >= 0 else self.type_box.findData("action"))
         self.type_box.blockSignals(False)
         sid = str(self._step.get("id", ""))
@@ -224,7 +292,9 @@ class StepEditor(QWidget):
             timeout = 5
         self.python_timeout.setValue(max(1, min(30, timeout)))
         self.python_trusted.blockSignals(True)
-        self.python_trusted.setChecked(self._step.get("trusted") is True)
+        code = str(self._step.get('code', ''))
+        valid_hash = self._step.get('trusted_hash') in (None, hashlib.sha256(code.encode('utf-8')).hexdigest())
+        self.python_trusted.setChecked(self._step.get("trusted") is True and valid_hash)
         self.python_trusted.blockSignals(False)
         self.var_name_edit.setText(str(self._step.get("name", "")))
         self.var_value_edit.setText(str(self._step.get("value", "")))
@@ -236,12 +306,21 @@ class StepEditor(QWidget):
         self.else_button.setText("编辑不满足时的步骤（%d）" % len(self._step.get("else") or []))
         self.loop_button.setText("编辑循环内部步骤（%d）" % len(self._step.get("steps") or []))
         args = self._step.get("args")
-        self.arg_edit.setPlainText(json.dumps(args, ensure_ascii=False) if args else "")
+        self._rebuild_parameters(args)
+        proc = all_processors().get(sid)
+        extra = {k: v for k, v in (args or {}).items() if k not in (proc.args if proc else {})}
+        self.arg_edit.setPlainText(json.dumps(extra, ensure_ascii=False) if extra else "")
+        macro_args = dict(self._step.get('params') or {}, **(args or {}))
+        self.macro_sequence.setPlainText(str(macro_args.get('sequence', '')))
+        from ..core.actions.office_macro import macro_hash
+        self.macro_trusted.setChecked(macro_args.get('trusted') is True and
+                                      macro_args.get('trusted_hash') == macro_hash(self.macro_sequence.toPlainText()))
         self._sync_visibility()
 
     def dump(self) -> Dict[str, Any]:
         t = self.type_box.currentData()
-        out: Dict[str, Any] = {"type": t}
+        out: Dict[str, Any] = copy.deepcopy(self._step) if t == self._step.get('type') else {}
+        out['type'] = t
         if t == "action":
             selected_id = self.id_box.currentData()
             selected_label = (self.id_box.itemText(self.id_box.currentIndex())
@@ -251,17 +330,37 @@ class StepEditor(QWidget):
                          self.id_box.currentText().strip())
             if self.input_edit.text().strip():
                 out["input"] = self.input_edit.text()
+            else:
+                out.pop('input', None)
+            args = self.parameter_form.collect()
             txt = self.arg_edit.toPlainText().strip()
             if txt:
                 try:
-                    out["args"] = json.loads(txt)
+                    extra = json.loads(txt)
+                    if not isinstance(extra, dict):
+                        raise ValueError('参数必须是对象')
+                    args.update(extra)
                 except Exception as e:
                     raise ValueError("args 不是合法 JSON：%s" % e)
+            if out['id'] == 'office.macro':
+                from ..core.actions.office_macro import macro_hash, validate_sequence
+                sequence = self.macro_sequence.toPlainText()
+                validate_sequence(sequence)
+                args = dict(sequence=sequence, trusted=self.macro_trusted.isChecked(),
+                            trusted_hash=macro_hash(sequence) if self.macro_trusted.isChecked() else '')
+            if args:
+                out['args'] = args
+            else:
+                out.pop('args', None)
         elif t == "python":
             out["code"] = self.python_edit.toPlainText()
             out["input"] = self.input_edit.text()
             out["timeout_seconds"] = self.python_timeout.value()
             out["trusted"] = self.python_trusted.isChecked()
+            if out['trusted']:
+                out['trusted_hash'] = hashlib.sha256(out['code'].encode('utf-8')).hexdigest()
+            else:
+                out.pop('trusted_hash', None)
         elif t == "condition":
             out["expr"] = self.expr_edit.text().strip() or "always"
             out["then"] = list(self._step.get("then") or [])
@@ -294,6 +393,10 @@ class StepEditor(QWidget):
             self.python_trusted.blockSignals(False)
 
     def _edit_branch(self, key: str) -> None:
+        owner = self.window()
+        if isinstance(owner, ChainEditorDialog):
+            owner.show_branch(key)
+            return
         current = [dict(item) for item in (self._step.get(key) or [])]
         child = {"id": "nested", "name": "子流程", "steps": current}
         dialog = ChainEditorDialog(child, self.service, self)
@@ -315,10 +418,12 @@ class ChainEditorDialog(QDialog):
     def __init__(self, chain: Dict[str, Any], service=None, parent=None) -> None:
         super().__init__(parent)
         self.service = service
-        self.setWindowTitle("事件链编排 · 变量化步骤")
-        self.resize(900, 680)
-        self._chain = dict(chain)
-        self._steps: List[Dict[str, Any]] = [dict(s) for s in chain.get("steps") or []]
+        self._task = None
+        self._closed = False
+        self.setWindowTitle("工作流 · 步骤编排与结果预览")
+        self.resize(1000, 740)
+        self._chain = copy.deepcopy(chain)
+        self._steps: List[Dict[str, Any]] = copy.deepcopy(chain.get("steps") or [])
         # 正在编辑的步骤下标。必须自己记，不能问 list.currentRow()：
         # 选中变化早于提交发生，问 list 会把"旧编辑内容"写进"新选中的行"，
         # 表现为一点步骤就把那一步抹成空白——静默毁数据。
@@ -327,95 +432,138 @@ class ChainEditorDialog(QDialog):
         root = QVBoxLayout(self)
         meta = QFormLayout()
         self.name_edit = QLineEdit(chain.get("name", ""))
-        self.id_edit = QLineEdit(chain.get("id", ""))
+        import uuid
+        self.id_edit = QLineEdit(chain.get("id") or 'chain.' + uuid.uuid4().hex[:12])
         self.desc_edit = QLineEdit(chain.get("description", ""))
         self.name_edit.setPlaceholderText("例如：抓取选区并清理文本")
         self.id_edit.setPlaceholderText("例如：chain.clean_selection")
         self.desc_edit.setPlaceholderText("描述流程用途，便于之后识别和维护")
         meta.addRow("名称", self.name_edit)
-        meta.addRow("id", self.id_edit)
+        self.id_edit.hide()
         meta.addRow("说明", self.desc_edit)
         root.addLayout(meta)
-        guide = QLabel("把步骤按顺序串起来：复制选区 / OCR → 处理文本 → 写入变量 → 粘贴或复制结果。\n"
-                       "支持变量 {clipboard}、{selection}、{ocr_text}、{last.output}、{step1.output}、{var:name}。"
-                       "云端或外部工具节点应显式配置并遵循隐私授权。")
+        guide = QLabel("选择内容 → 添加处理步骤 → 用样本预览 → 保存为工具。\n"
+                       "预览不会修改剪贴板或目标文档，不执行脚本、宏和外部工具。真实运行请在保存后从面板启动。")
         guide.setObjectName("HintLabel")
         guide.setWordWrap(True)
         root.addWidget(guide)
 
         body = QHBoxLayout()
-        self.list = QListWidget()
+        self.list = StepTree(describe_step)
         self.list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list.currentRowChanged.connect(self._on_select)
         body.addWidget(self.list, 1)
 
         right = QVBoxLayout()
         self.editor = StepEditor(service, self)
-        right.addWidget(self.editor)
+        editor_scroll = QScrollArea()
+        editor_scroll.setWidgetResizable(True)
+        editor_scroll.setWidget(self.editor)
+        right.addWidget(editor_scroll, 1)
         bar = QGridLayout()
         controls = (("＋ 采集选区", lambda: self.add_action("clipboard.copy")),
                     ("＋ OCR 文字", lambda: self.add_action("ocr.copy_text")),
                     ("＋ 变量", lambda: self.add_type("setvar")),
-                    ("＋ Python", lambda: self.add_type("python")),
+                    ("＋ 条件", lambda: self.add_type("condition")),
                     ("＋ 动作", self.add_step), ("删除步骤", self.del_step),
                     ("上移", lambda: self.move_step(-1)),
                     ("下移", lambda: self.move_step(1)),
+                    ('复制步骤', self.duplicate_step),
+                    ('＋ 循环', lambda: self.add_type('loop')),
+                    ('＋ 宏', lambda: self.add_action('office.macro')),
+                    ('＋ 脚本', lambda: self.add_type('python')),
                     ("试运行", self.test_run))
         for i, (text, slot) in enumerate(controls):
             b = QPushButton(text, self)
             b.clicked.connect(slot)
             if text == "试运行":
-                bar.addWidget(b, 2, 0, 1, 4)
+                bar.addWidget(b, 3, 0, 1, 4)
             else:
                 bar.addWidget(b, i // 4, i % 4)
         right.addLayout(bar)
         body.addLayout(right, 2)
-        root.addLayout(body, 1)
+        root.addLayout(body, 3)
+
+        self.sample = QPlainTextEdit()
+        self.sample.setPlaceholderText('粘贴用于预览的样本（不会读取真实选区；最多 100 万字符）')
+        self.sample.setMaximumHeight(72)
+        root.addWidget(self.sample)
+        self.preview_output = QPlainTextEdit()
+        self.preview_output.setReadOnly(True)
+        self.preview_output.setPlaceholderText('运行结果与步骤说明')
+        self.preview_output.setMaximumHeight(95)
+        root.addWidget(self.preview_output)
+        self.stop_button = QPushButton('停止预览')
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.cancel_preview)
+        root.addWidget(self.stop_button)
 
         self.status = QLabel("", self)
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
         box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        box.button(QDialogButtonBox.Save).setText('保存工作流')
+        box.button(QDialogButtonBox.Cancel).setText('取消')
         box.accepted.connect(self._on_save)
         box.rejected.connect(self.reject)
         root.addWidget(box)
 
         self._reload_list()
 
-    def _commit_current(self) -> None:
-        if 0 <= self._cur < len(self._steps):
+    def _commit_current(self) -> bool:
+        container, index = self.list.location(self._cur)
+        if container is not None:
             try:
-                self._steps[self._cur] = self.editor.dump()
+                previous = container[index]
+                value = self.editor.dump()
+                if value.get('type') == previous.get('type'):
+                    for key in ('then', 'else', 'steps'):
+                        if key in previous:
+                            value[key] = previous[key]
+                previous.clear()
+                previous.update(value)
             except ValueError as e:
                 self.status.setText("参数错误：%s" % e)
+                return False
+        return True
 
     def _reload_list(self) -> None:
+        self._cur = -1
         self.list.blockSignals(True)
-        self.list.clear()
-        for i, s in enumerate(self._steps):
-            self.list.addItem(QListWidgetItem("%d. %s" % (i + 1, describe_step(s))))
+        self.list.set_steps(self._steps)
         self.list.blockSignals(False)
         if self._steps:
             self.list.setCurrentRow(0)
 
     def _on_select(self, row: int) -> None:
-        self._commit_current()          # 提交的是 self._cur（上一行），不是 row
+        if not self._commit_current():
+            self.list.blockSignals(True)
+            self.list.setCurrentRow(self._cur)
+            self.list.blockSignals(False)
+            return
         self._cur = row
-        if 0 <= row < len(self._steps):
-            self.editor.load(self._steps[row])
+        container, index = self.list.location(row)
+        self.editor.setEnabled(container is not None)
+        if container is not None:
+            self.editor.load(container[index])
 
     def add_step(self) -> None:
         self.add_action("text.strip")
 
     def add_action(self, action_id: str) -> None:
-        self._commit_current()
-        self._steps.append({"type": "action", "id": action_id})
+        if not self._commit_current():
+            return
+        step = {"type": "action", "id": action_id}
+        if action_id == 'office.macro':
+            step['args'] = {'sequence': 'ctrl+b', 'trusted': False}
+        self.list.insertion_target(self._steps).append(step)
         self._reload_list()
-        self.list.setCurrentRow(len(self._steps) - 1)   # _cur 由 _on_select 推进
+        self.list.select_step(step)
 
     def add_type(self, step_type: str) -> None:
-        self._commit_current()
+        if not self._commit_current():
+            return
         defaults = {"setvar": {"type": "setvar", "name": "result", "value": "{last.output}"},
                     "python": {"type": "python", "code": "result = input_text",
                                "input": "{last.output}", "timeout_seconds": 5,
@@ -424,61 +572,98 @@ class ChainEditorDialog(QDialog):
                     "wait": {"type": "wait", "seconds": 0.5},
                     "loop": {"type": "loop", "times": 2, "steps": []},
                     "stop": {"type": "stop", "message": "流程已停止"}}
-        self._steps.append(defaults.get(step_type, {"type": step_type}))
+        step = defaults.get(step_type, {"type": step_type})
+        self.list.insertion_target(self._steps).append(step)
         self._reload_list()
-        self.list.setCurrentRow(len(self._steps) - 1)
+        self.list.select_step(step)
 
     def del_step(self) -> None:
-        self._commit_current()
-        r = self.list.currentRow()
-        if 0 <= r < len(self._steps):
-            self._steps.pop(r)
+        if not self._commit_current():
+            return
+        container, r = self.list.location(self.list.currentRow())
+        if container is not None:
+            container.pop(r)
             self._reload_list()
-            self._cur = -1
 
     def move_step(self, delta: int) -> None:
-        self._commit_current()
-        r = self.list.currentRow()
-        nr = r + delta
-        if r < 0 or not 0 <= nr < len(self._steps):
+        if not self._commit_current():
             return
-        self._steps[r], self._steps[nr] = self._steps[nr], self._steps[r]
+        container, r = self.list.location(self.list.currentRow())
+        nr = r + delta
+        if container is None or not 0 <= nr < len(container):
+            return
+        container[r], container[nr] = container[nr], container[r]
+        step = container[nr]
         self._reload_list()
-        self.list.setCurrentRow(nr)
-        self._cur = nr
+        self.list.select_step(step)
+
+    def show_branch(self, key):
+        if not self._commit_current():
+            return
+        container, index = self.list.location(self._cur)
+        if container is None:
+            return
+        step = container[index]
+        self._reload_list()
+        self.list.select_branch(step, key)
+
+    def duplicate_step(self):
+        if not self._commit_current():
+            return
+        container, index = self.list.location(self.list.currentRow())
+        if container is not None:
+            step = copy.deepcopy(container[index])
+            container.insert(index + 1, step)
+            self._reload_list()
+            self.list.select_step(step)
 
     def test_run(self) -> None:
-        """试运行：用当前步骤构造临时链跑一遍，只看结果不动真实剪贴板。"""
-        self._commit_current()
+        """Run a detached snapshot off the UI thread under executor preview policy."""
+        if self._task or not self._commit_current():
+            return
         if self.service is None:
             self.status.setText("无服务上下文，无法试运行")
             return
-        python_steps = [s for s in self._steps if s.get("type") == "python"]
-        if python_steps:
-            if not all(s.get("trusted") is True for s in python_steps):
-                self.status.setText("试运行 Python 脚本前，请先逐个检查脚本并勾选信任授权。")
-                return
-            answer = QMessageBox.warning(
-                self, "试运行 Python 脚本",
-                "试运行将执行已授权的 Python 脚本。脚本具有当前账户权限，可访问文件、网络及屏幕，可能绕过 Easy-Tools 自身的窗口捕获排除。",
-                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
-            if answer != QMessageBox.Yes:
-                return
         from ..core.chain import ChainRunner
-        chain = {"id": "test", "name": "试运行", "steps": self._steps}
-        runner = ChainRunner(self.service.store)
-        safe = [s for s in self._steps if s.get("type") != "action"
-                or str(s.get("id", "")) not in _SIDE_EFFECT_IDS]
-        chain["steps"] = safe or self._steps
-        res = runner.run_chain(chain, self.service.action_context())
-        skipped = len(self._steps) - len(safe)
-        note = "（已跳过 %d 个会产生真实输入/剪贴板副作用的步骤）" % skipped if skipped else ""
-        self.status.setText("%s%s\n输出：%s" % (
-            "成功" if res.ok else "失败：" + res.message, note,
-            (res.output[:500] if res.output else "（空）")))
+        sample = self.sample.toPlainText()
+        if len(sample) > 1_000_000:
+            self.status.setText('样本超过 100 万字符，请缩小输入范围')
+            return
+        chain = {"id": "test", "name": "工作流预览", "steps": copy.deepcopy(self._steps)}
+        runner = ChainRunner(self.service.store, preview=True, sample=sample)
+        context = self.service.action_context()
+        self.status.setText('正在后台预览… 可继续编辑，当前运行使用启动时的快照')
+        self.stop_button.setEnabled(True)
+        self._task = submit_task(self.service.tasks, '工作流预览',
+                                 lambda cancel: runner.run_chain(chain, context),
+                                 self._preview_finished, cancel=runner.cancel)
+        if not self._task:
+            self._preview_finished(None, '队列已满，请稍后重试')
+
+    @Slot(object, str)
+    def _preview_finished(self, result, error):
+        self._task = None
+        if self._closed:
+            return
+        self.stop_button.setEnabled(False)
+        self.status.setText(error or ('预览完成' if result.ok else '预览停止：' + result.message))
+        self.preview_output.setPlainText('' if error else '\n'.join(result.log) + '\n\n输出：\n' + result.output[:20000])
+
+    def cancel_preview(self):
+        if self._task:
+            self.service.tasks.cancel(self._task)
+            self.status.setText('正在停止预览…')
+
+    def done(self, result):
+        self._closed = True
+        self.cancel_preview()
+        self.sample.clear()
+        self.preview_output.clear()
+        super().done(result)
 
     def result_chain(self) -> Dict[str, Any]:
-        self._commit_current()
+        if not self._commit_current():
+            raise ValueError('当前步骤参数无效')
         return {
             "id": self.id_edit.text().strip() or self._chain.get("id"),
             "name": self.name_edit.text().strip() or "未命名链",
@@ -488,15 +673,8 @@ class ChainEditorDialog(QDialog):
         }
 
     def _on_save(self) -> None:
-        self.accept()
-
-
-#: 试运行时会跳过这些 id——它们会真的敲键盘/改剪贴板。
-_SIDE_EFFECT_IDS = {
-    "clipboard.copy", "clipboard.set", "clipboard.clear",
-    "input.paste", "input.type", "text.input", "snippet.input",
-    "clipboard.processor", "ocr.copy_text", "chain.run",
-}
+        if self._commit_current():
+            self.accept()
 
 
 if __name__ == "__main__":

@@ -33,6 +33,10 @@ class ActionContext:
     notify: Optional[Callable[[str, str], None]] = None  # (level, message)
     start_capture: Optional[Callable[[bool, bool, bool], None]] = None  # (auto_ocr, copy_image, ask_question)
     ask_question: Optional[Callable[[str, bool], None]] = None
+    cancel_event: Any = None
+    target_hwnd: Optional[int] = None
+    target_pid: Optional[int] = None
+    deadline: Optional[float] = None
 
     def message(self, text: str, level: str = "info") -> None:
         log.info("%s", text)
@@ -49,6 +53,7 @@ class ActionResult:
     message: str = ""
     output: str = ""            # 供事件链后续步骤接续
     cancelled: bool = False
+    trace: List[dict] = field(default_factory=list)
 
     @classmethod
     def success(cls, message: str = "", output: str = "") -> "ActionResult":

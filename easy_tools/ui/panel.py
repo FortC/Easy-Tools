@@ -88,6 +88,7 @@ class ActionPanel(QWidget):
         outer.setAlignment(Qt.AlignTop)
         # 投影让面板从桌面"浮起来"，这是观感差别最大的一处
         shadow = QGraphicsDropShadowEffect(root)
+        self._shadow = shadow
         shadow.setBlurRadius(40)
         shadow.setOffset(0, 8)
         shadow.setColor(QColor(0, 0, 0, 160))
@@ -166,6 +167,7 @@ class ActionPanel(QWidget):
 
     # ------------------------------------------------------------ 配置与样式
     def apply_config(self) -> None:
+        self._shadow.setEnabled(not self.service.store.section('performance', {}).get('reduce_effects', True))
         cfg = self.service.store.section("panel", {})
         p = theme.palette("light")
         self._accent = p["accent"]

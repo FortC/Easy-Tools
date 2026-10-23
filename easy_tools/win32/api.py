@@ -247,6 +247,7 @@ user32.CloseClipboard = _decl(user32, "CloseClipboard", wintypes.BOOL)
 user32.EmptyClipboard = _decl(user32, "EmptyClipboard", wintypes.BOOL)
 user32.GetClipboardData = _decl(user32, "GetClipboardData", HANDLE, wintypes.UINT)
 user32.SetClipboardData = _decl(user32, "SetClipboardData", HANDLE, wintypes.UINT, HANDLE)
+user32.GetClipboardSequenceNumber = _decl(user32, 'GetClipboardSequenceNumber', wintypes.DWORD)
 user32.IsClipboardFormatAvailable = _decl(user32, "IsClipboardFormatAvailable", wintypes.BOOL, wintypes.UINT)
 user32.CountClipboardFormats = _decl(user32, "CountClipboardFormats", wintypes.UINT)
 

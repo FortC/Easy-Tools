@@ -33,6 +33,8 @@ _llama_datas = [(os.path.join(_llama_dir, name), "llama")
                 for name in os.listdir(_llama_dir)
                 if name == "llama-server.exe" or name.lower().endswith(".dll")
                 or name.lower().startswith("license-")]
+from easy_tools.core.runtime import msvc_runtime_files
+_llama_datas += [(str(path), 'llama') for path in msvc_runtime_files()]
 if not os.path.isfile(_model_file):
     raise SystemExit("缺少内置模型权重：" + _model_file)
 if not os.path.isfile(os.path.join(_llama_dir, "llama-server.exe")):
@@ -42,9 +44,13 @@ if not os.path.isfile(os.path.join(_llama_dir, "llama-server.exe")):
 # 懒加载：静态分析只能看到 import 名字，模型与动态库必须整包收集，
 # 否则打包后 OCR 会静默失效。
 from PyInstaller.utils.hooks import collect_all
+from importlib.util import find_spec
+for _required in ('rapidocr_onnxruntime', 'onnxruntime', 'cv2', 'numpy'):
+    if find_spec(_required) is None:
+        raise SystemExit('完整安装包缺少 OCR 构建依赖：' + _required + '；请安装 requirements-build.txt 后重试。')
 _ocr_datas, _ocr_binaries, _ocr_hidden = [], [], []
 for _pkg in ("rapidocr_onnxruntime", "onnxruntime", "cv2", "numpy"):
-    _d, _b, _h = collect_all(_pkg)
+    _d, _b, _h = collect_all(_pkg, include_py_files=False)
     _ocr_datas += _d
     _ocr_binaries += _b
     _ocr_hidden += _h
@@ -52,9 +58,13 @@ _ocr_datas = [entry for entry in _ocr_datas
               if not any(part in str(entry[0]).replace("\\", "/").lower().split("/")
                          for part in ("test", "tests", "testing", "benchmarks"))
               and not os.path.basename(str(entry[0])).lower().startswith("test_")
+              and not os.path.basename(str(entry[0])).lower().endswith('_test.py')
               and os.path.basename(str(entry[0])).lower() != "conftest.py"]
 _ocr_hidden = [name for name in _ocr_hidden
-               if not any(part in name.split(".")
+               if not name.startswith(('onnxruntime.quantization', 'onnxruntime.transformers',
+                                       'onnxruntime.tools', 'onnxruntime.datasets',
+                                       'numpy.f2py', 'numpy.distutils', 'numpy.array_api'))
+               and not any(part in name.split(".")
                           for part in ("test", "tests", "testing", "benchmarks"))
                and not any(part.startswith("test_") or part.endswith("_test")
                            or part == "conftest"

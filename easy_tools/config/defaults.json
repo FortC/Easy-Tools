@@ -2,6 +2,8 @@
   "version": 1,
   "general": { "start_minimized": true, "close_on_click_outside": true, "close_on_action": true, "open_settings_on_start": false, "language": "zh_CN" },
   "privacy": { "exclude_from_capture": true },
+  "performance": { "reduce_effects": true, "model_idle_minutes": 5 },
+  "reminders": [],
   "question_banks": [],
   "llm": { "enabled": true, "prefer_bank_answer": true, "answer_content_only": false, "provider": "builtin", "ccswitch_app": "", "allow_cloud": false },
   "trigger": {

@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
                                QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget)
 
@@ -16,30 +16,13 @@ from easy_tools.core.paths import app_root, data_dir, is_frozen, resource_root
 from easy_tools.core.update_client import check_update, stage_update
 
 
-class _UpdateWorker(QThread):
-    progress = Signal(str)
-    completed = Signal(object, str)
-
-    def __init__(self, action: str, manifest=None, parent=None):
-        super().__init__(parent)
-        self.action = action
-        self.manifest = manifest
-
-    def run(self):
-        try:
-            if self.action == "check":
-                result = check_update(__version__)
-            else:
-                result = stage_update(self.manifest, self.progress.emit)
-            self.completed.emit(result, "")
-        except Exception as exc:
-            self.completed.emit(None, str(exc))
-
-
 class SoftwareUpdatePage(QWidget):
+    progress_changed = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._worker = None
+        self._task = None
+        self._manager = parent.service.tasks
         self._candidate = None
         self._staged = None
         self._pending_result = None
@@ -55,6 +38,7 @@ class SoftwareUpdatePage(QWidget):
         self.status = QLabel("灰度更新只面向分批放量中、且本机被分配到的安装实例。", self)
         self.status.setWordWrap(True)
         self.status.setStyleSheet("color:#475569")
+        self.progress_changed.connect(self.status.setText, Qt.QueuedConnection)
         layout.addWidget(self.status)
         self.progress = QProgressBar(self)
         self.progress.setRange(0, 100)
@@ -88,20 +72,21 @@ class SoftwareUpdatePage(QWidget):
             QTimer.singleShot(350, self.check)
 
     def _start(self, action, manifest=None):
-        if self._worker is not None and self._worker.isRunning():
+        if self._task:
             return
         self.check_button.setEnabled(False)
         self.install_button.setEnabled(False)
         self.progress.setRange(0, 0 if action == "stage" else 100)
         self.progress.setValue(0)
         self.progress.show()
-        self._worker = _UpdateWorker(action, manifest, self)
         self._action = action
-        self._pending_result = None
-        self._worker.progress.connect(self.status.setText)
-        self._worker.completed.connect(self._cache_result)
-        self._worker.finished.connect(self._worker_finished)
-        self._worker.start()
+        from .task_bridge import submit_task
+        progress = self.progress_changed.emit
+        self._task = submit_task(self._manager, '检查更新' if action == 'check' else '下载更新',
+                                 lambda cancel: check_update(__version__) if action == 'check' else stage_update(manifest, progress, cancel),
+                                 self._completed, key='software-update')
+        if not self._task:
+            self._completed(None, '任务队列已满，请稍后重试')
 
     def check(self):
         self._candidate = None
@@ -127,18 +112,9 @@ class SoftwareUpdatePage(QWidget):
         self._start("stage", self._candidate["manifest"])
 
     @Slot(object, str)
-    def _cache_result(self, result, error):
-        self._pending_result = (result, error)
-
-    @Slot()
-    def _worker_finished(self):
-        action = self._action
-        result, error = self._pending_result or (None, "更新任务未正常返回。")
-        worker = self._worker
-        self._worker = None
-        if worker is not None:
-            worker.deleteLater()
-        self._finished(action, result, error)
+    def _completed(self, result, error):
+        self._task = None
+        self._finished(self._action, result, error)
 
     def _finished(self, action, result, error):
         self.progress.hide()

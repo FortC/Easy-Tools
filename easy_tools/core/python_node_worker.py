@@ -39,8 +39,8 @@ class _LimitedOutput:
 
 def run_worker() -> int:
     try:
-        stream = sys.stdin if sys.stdin is not None else os.fdopen(0, "r", encoding="utf-8")
-        payload = json.load(stream)
+        from .worker_stdio import read_payload
+        payload = read_payload()
         code = str(payload.get("code", ""))
         namespace = {"input_text": str(payload.get("input_text", "")),
                      "variables": dict(payload.get("variables") or {}),
@@ -68,13 +68,5 @@ def run_worker() -> int:
 
 
 def _emit(value: dict) -> None:
-    payload = (json.dumps(value, ensure_ascii=False) + "\n").encode("utf-8")
-    stream = sys.__stdout__ or sys.stdout
-    if stream is not None:
-        if hasattr(stream, "buffer"):
-            stream.buffer.write(payload)
-        else:
-            stream.write(payload.decode("utf-8"))
-        stream.flush()
-    else:
-        os.write(1, payload)
+    from .worker_stdio import write_payload
+    write_payload(value)

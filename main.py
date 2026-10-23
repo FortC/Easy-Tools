@@ -22,14 +22,24 @@ from __future__ import annotations
 
 import sys
 import time
+from easy_tools.core.runtime import preload_msvc
+
+preload_msvc()
 
 # The PyInstaller executable can relaunch itself in a separate Python-node
 # worker before loading Qt or starting the single-instance desktop process.
 if "--run-python-node" in sys.argv:
     from easy_tools.core.python_node_worker import run_worker
     raise SystemExit(run_worker())
+if '--run-processor' in sys.argv:
+    from easy_tools.core.processor_worker import main as processor_main
+    raise SystemExit(processor_main())
+if '--selftest-upgrade' in sys.argv:
+    sys.argv.remove('--selftest-upgrade')
+    from easy_tools.diagnostics.upgrade_workflow import main as upgrade_main
+    raise SystemExit(upgrade_main())
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, QEvent
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QInputDialog, QMenu, QMessageBox,
                                QSystemTrayIcon)
@@ -151,6 +161,10 @@ def main() -> int:
     app.installEventFilter(OutsideClickFilter(panel))
 
     state = {"qa_dialogs": []}
+    from easy_tools.ui.reminders_page import ReminderInbox
+    reminder_inbox = ReminderInbox(app)
+    from easy_tools.ui.notifications import ProtectedNotice
+    protected_notice = ProtectedNotice(app)
     from easy_tools.ui.window_presenter import SettingsPresenter
     settings_presenter = SettingsPresenter(lambda: SettingsWindow(service), service.store,
                                           before_show=panel.close_panel, parent=app)
@@ -184,9 +198,14 @@ def main() -> int:
         # 任意线程可调（动作在后台线程执行）；GUI 部分一律经桥搬回 GUI 线程。
         # 直接从工作线程调 tray.showMessage 是跨线程违规——"卡死在后台"
         # 这类偶发问题的嫌疑来源之一，就在这类细节里。
-        log.info("[%s] %s", level, message)
-        if not notifications_allowed(service.store.get()):
-            return  # 系统托盘通知不属于受保护窗口，隐私模式会一并屏蔽
+        log.info("[%s] 应用操作提示", level)
+        notification_config = service.store.get()
+        if not notification_config.get('trigger', {}).get('notify_enabled', True):
+            return
+        if not notifications_allowed(notification_config):
+            if level in ('warning', 'error'):
+                protected_notice.requested.emit(level, message)
+            return
         bridge.notify(level, message)
 
     _mark("服务初始化")
@@ -279,6 +298,7 @@ def main() -> int:
     service.bind_ui(open_settings=show_settings, show_panel=show_panel,
                     toggle_panel=toggle_panel, outside_click=outside_click, notify=notify,
                     start_capture=start_capture,
+                    remind=reminder_inbox.requested.emit,
                     ask_question=lambda text, is_ocr:
                         bridge.request_model_question.emit(str(text), bool(is_ocr)))
 
@@ -357,9 +377,15 @@ def main() -> int:
 
     def shutdown() -> None:
         log.info("正在退出：停止钩子与后台线程")
-        guard.release()
         service.stop()
         tray.hide()
+        capture_privacy.close()
+        # Dispose Python-overridden widgets before QApplication / interpreter teardown.
+        for window in app.topLevelWidgets():
+            window.close()
+            window.deleteLater()
+        app.sendPostedEvents(None, QEvent.DeferredDelete)
+        guard.release()
 
     app.aboutToQuit.connect(shutdown)
     QTimer.singleShot(1200, lambda: tray.setToolTip(

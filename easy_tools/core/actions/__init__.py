@@ -8,6 +8,8 @@
 from .base import (ActionContext, ActionResult, ActionSpec, ACTIONS,
                    register, get_action, all_actions, clear_registry)
 from . import processors  # noqa: F401  触发处理器自注册
+from . import office_processors  # noqa: F401
+from . import office_macro  # noqa: F401
 from . import openers      # noqa: F401
 from . import text_input   # noqa: F401
 from . import clipboard    # noqa: F401

@@ -84,6 +84,20 @@ def restore(max_wait_ms: int = 120) -> bool:
     return ok
 
 
+def restore_to(expected=None, expected_pid=None) -> bool:
+    """Do not steal focus back after the user has switched to another application."""
+    if expected is None:
+        return restore()
+    if target_hwnd() != expected:
+        return False
+    if expected_pid and w32.process_id(expected) != expected_pid:
+        return False
+    foreground = w32.get_foreground()
+    if foreground.hwnd != expected and not w32.is_our_window(foreground.hwnd):
+        return False
+    return restore()
+
+
 def clear() -> None:
     with _lock:
         global _target

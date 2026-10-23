@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -16,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PySide6.QtCore import QEvent, QEventLoop, QPoint, QPointF, QRect, Qt, QThread
-from PySide6.QtGui import QColor, QFont, QImage, QKeyEvent, QMouseEvent, QPainter
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QKeyEvent, QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QInputDialog, QWidget
 from shiboken6 import isValid
 
@@ -50,6 +51,12 @@ def run(report_path: str | Path, real_ocr: bool = True) -> int:
     from easy_tools.ui.theme import apply_application_theme
     apply_application_theme(app)
     app.setQuitOnLastWindowClosed(False)
+    fixture_font = 'Segoe UI'
+    if sys.platform == 'win32' and app.platformName() == 'offscreen':
+        font_id = QFontDatabase.addApplicationFont(str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'segoeui.ttf'))
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if families:
+            fixture_font = families[0]
     report = {"platform": app.platformName(), "scenarios": [], "ok": False}
     errors = []
     previous_hook = sys.excepthook
@@ -126,6 +133,8 @@ def run(report_path: str | Path, real_ocr: bool = True) -> int:
 
             service = SimpleNamespace(store=store, ocr=DelayedOcr(),
                                       question_answer=QuestionAnswerService(store))
+            from ..core.tasks import TaskManager
+            service.tasks = TaskManager()
             service.ccswitch_model = None
             service.status_text = lambda: "Isolated capture diagnostic"
             service.refresh_context = lambda: None
@@ -227,7 +236,7 @@ def run(report_path: str | Path, real_ocr: bool = True) -> int:
                     painter = QPainter(image)
                     painter.scale(scale, scale)
                     painter.setPen(QColor("black"))
-                    painter.setFont(QFont("Segoe UI", 18))
+                    painter.setFont(QFont(fixture_font, 18))
                     painter.drawText(40, 82, "What is 2 plus 2?")
                     painter.drawText(40, 128, "A. 3       B. 4")
                     painter.end()
@@ -319,6 +328,9 @@ def run(report_path: str | Path, real_ocr: bool = True) -> int:
                 # Run the shipped backend through the same full action/drag/
                 # worker/result route, rather than only importing the OCR DLL.
                 service.ocr = OcrService(store)
+                report['real_ocr_direct'] = service.ocr.recognize_capture(cap)
+                report['real_ocr_status'] = service.ocr.status()
+                image.save(str(Path(report_path).with_name('ocr-synthetic.png')))
                 before = len(answers)
                 with _replace(overlay_module, "_screen_at_cursor", lambda: Screen()), \
                         _replace(overlay_module, "monitor_rect_at_cursor", lambda: (0, 0, width, height)), \
@@ -335,7 +347,7 @@ def run(report_path: str | Path, real_ocr: bool = True) -> int:
                     mouse(overlay, QEvent.MouseButtonRelease, QPoint(360, 210))
                     wait_for(lambda: len(answers) > before, timeout=30)
                     wait_for(lambda: not controller._sessions)
-                assert "plus" in answers[-1][0].lower(), "真实 OCR 没有识别合成题目"
+                assert "plus" in answers[-1][0].lower(), ("真实 OCR 没有识别合成题目", answers[-1])
                 assert answers[-1][1] == "B. 4", answers[-1]
                 check_affinity(dialogs[-1], True)
                 report["real_ocr"] = {"ready": True, "matched_answer": "B. 4"}
@@ -350,7 +362,7 @@ def run(report_path: str | Path, real_ocr: bool = True) -> int:
                             try:
                                 painter.fillRect(self.rect(), QColor("white"))
                                 painter.setPen(QColor("black"))
-                                painter.setFont(QFont("Segoe UI", 20))
+                                painter.setFont(QFont(fixture_font, 20))
                                 painter.drawText(40, 80, "What is 2 plus 2?")
                                 painter.drawText(40, 140, "A. 3       B. 4")
                             finally:

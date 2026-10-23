@@ -141,6 +141,7 @@ class SidebarTabs(QWidget):
         "OCR 设置": "scan-text", "文本输入": "keyboard",
         "隐私保护": "shield", "知识库": "database",
         "本机模型": "cpu", "数据/导入导出": "arrow-down-up",
+        '办公工具': 'file-spreadsheet', '定时提醒': 'clock', '运行任务': 'list-ordered',
     }
 
     def __init__(self, parent=None) -> None:
@@ -158,10 +159,19 @@ class SidebarTabs(QWidget):
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(8, 16, 8, 12)
         side.setSpacing(8)
-        brand = QLabel("Easy-Tools\n设置中心", sidebar)
+        brand = QLabel("Easy-Tools\n办公助手", sidebar)
         brand.setObjectName("SettingsBrand")
         side.addWidget(brand)
         side.addWidget(self._nav, 1)
+        self.more = QPushButton('更多设置 ▸')
+        self.more.setObjectName('QuietButton')
+        self.more.setCheckable(True)
+        self.more.toggled.connect(self._toggle_advanced)
+        side.addWidget(self.more)
+        self.privacy_status = QLabel('隐私保护')
+        self.privacy_status.setObjectName('PrivacyStatus')
+        self.privacy_status.setWordWrap(True)
+        side.addWidget(self.privacy_status)
         content = QWidget(self)
         content_lay = QVBoxLayout(content)
         content_lay.setContentsMargins(0, 0, 0, 0)
@@ -184,7 +194,9 @@ class SidebarTabs(QWidget):
 
     def addTab(self, page: QWidget, title: str) -> int:
         self._titles.append(title)
-        item = QListWidgetItem(title)
+        display = {'事件链': '工作流', '动作库': '工具管理', '特定操作区规则': '软件适用规则'}.get(title, title)
+        item = QListWidgetItem(display)
+        item.setData(Qt.UserRole, len(self._titles) - 1)
         item.setToolTip(title)
         mark = self._MARKS.get(title)
         if mark and icons.has_icon(mark):
@@ -198,9 +210,11 @@ class SidebarTabs(QWidget):
     def _select_page(self, index: int) -> None:
         if index < 0:
             return
+        item = self._nav.item(index)
+        index = item.data(Qt.UserRole)
         self._pages.setCurrentIndex(index)
         if index < len(self._titles):
-            self._page_title.setText(self._titles[index])
+            self._page_title.setText(item.text())
         self.currentChanged.emit(index)
 
     def currentWidget(self) -> QWidget | None:
@@ -213,7 +227,37 @@ class SidebarTabs(QWidget):
         return self._titles[index]
 
     def setCurrentIndex(self, index: int) -> None:
-        self._nav.setCurrentRow(index)
+        for row in range(self._nav.count()):
+            item = self._nav.item(row)
+            if item.data(Qt.UserRole) == index:
+                if item.isHidden():
+                    self.more.setChecked(True)
+                self._nav.setCurrentRow(row)
+                return
+
+    def arrange_navigation(self):
+        self._primary = ['办公工具', '事件链', '文本片段', '知识库', '定时提醒', '运行任务', '隐私保护']
+        self._nav.blockSignals(True)
+        items = [self._nav.takeItem(0) for _ in range(self._nav.count())]
+        items.sort(key=lambda item: self._primary.index(self._titles[item.data(Qt.UserRole)])
+                   if self._titles[item.data(Qt.UserRole)] in self._primary else 100 + item.data(Qt.UserRole))
+        for item in items:
+            self._nav.addItem(item)
+        self._nav.blockSignals(False)
+        self._toggle_advanced(False)
+        self.setCurrentIndex(0)
+
+    def _toggle_advanced(self, visible):
+        if not hasattr(self, '_primary'):
+            return
+        self.more.setText('收起设置 ▾' if visible else '更多设置 ▸')
+        for row in range(self._nav.count()):
+            item = self._nav.item(row)
+            title = self._titles[item.data(Qt.UserRole)]
+            item.setHidden(not visible and title not in self._primary)
+        current = self._nav.currentItem()
+        if current and current.isHidden():
+            self.setCurrentIndex(0)
 
 
 class _ChainBox(QGroupBox):
@@ -387,6 +431,13 @@ class SettingsWindow(QWidget):
     # ------------------------------------------------------------ 页面
     def _build_tabs(self) -> None:
         cfg = self.store.get()
+        from .office_tools_page import OfficeToolsPage
+        from .reminders_page import RemindersPage
+        from .tasks_page import TasksPage
+        self.office_tools_page = OfficeToolsPage(self.service, self)
+        self.tabs.addTab(self.office_tools_page, '办公工具')
+        self.reminders_page = RemindersPage(self.store, self)
+        self.tasks_page = TasksPage(self.service.tasks, self)
         from .update_page import SoftwareUpdatePage
         self.update_page = SoftwareUpdatePage(self)
         self.tabs.addTab(self.update_page, "软件更新")
@@ -483,6 +534,14 @@ class SettingsWindow(QWidget):
 
         self._build_chain_tab(cfg)
         self._build_simple_tabs(cfg)
+        self.tabs.addTab(self.reminders_page, '定时提醒')
+        self.tabs.addTab(self.tasks_page, '运行任务')
+        self.performance_page = FormPage([
+            Field('reduce_effects', '减少阴影和视觉特效（推荐低配机器开启）', 'bool', default=True),
+            Field('model_idle_minutes', '离线模型空闲后释放（分钟，1～120）', 'int', default=5),
+        ], cfg.get('performance', {}))
+        self.tabs.addTab(self.performance_page, '性能与运行')
+        self.tabs.arrange_navigation()
 
     # ------------------------------------------------------------ 自助：文本按钮
     def _rebuild_group_filter(self) -> None:
@@ -534,6 +593,16 @@ class SettingsWindow(QWidget):
     def _build_chain_tab(self, cfg: Dict[str, Any]) -> None:
         tab = QWidget()
         lay = QVBoxLayout(tab)
+        from ..core.workflow_templates import TEMPLATES
+        template_bar = QHBoxLayout()
+        self.template_choice = QComboBox()
+        for index, template in enumerate(TEMPLATES):
+            self.template_choice.addItem(template['name'], index)
+        template_bar.addWidget(self.template_choice, 1)
+        create_template = QPushButton('从模板创建工作流')
+        create_template.clicked.connect(self.add_template)
+        template_bar.addWidget(create_template)
+        lay.addLayout(template_bar)
         self.chain_list = QVBoxLayout()
         holder = QWidget()
         holder.setLayout(self.chain_list)
@@ -572,7 +641,8 @@ class SettingsWindow(QWidget):
             box = _ChainBox(c, self)
             b = QVBoxLayout(box)
             steps = c.get("steps") or []
-            text = "\n".join("  %d. %s" % (i + 1, s.get("type", "?"))
+            from .chain_editor import describe_step
+            text = "\n".join("  %d. %s" % (i + 1, describe_step(s))
                              for i, s in enumerate(steps)) or "（空）"
             lab = QLabel(text)
             lab.setStyleSheet("font-family: Consolas, monospace; color:#475569")
@@ -602,14 +672,43 @@ class SettingsWindow(QWidget):
         return None
 
     def add_chain(self) -> None:
-        self._chain_rows.append({
-            "id": "chain.custom.%d" % (len(self._chain_rows) + 1),
+        import uuid
+        chain = {
+            "id": "chain.custom." + uuid.uuid4().hex[:12],
             "name": "新事件链", "description": "",
             "trigger": {"type": "manual"},
             "steps": [{"type": "action", "id": "clipboard.copy"},
                       {"type": "action", "id": "text.strip", "input": "{clipboard}"},
-                      {"type": "action", "id": "input.paste", "input": "{last.output}"}]})
-        self._rebuild_chain_list()
+                      {"type": "action", "id": "clipboard.set", "input": "{last.output}"}]}
+        dialog = ChainEditorDialog(chain, self.service, self)
+        if dialog.exec() == QDialog.Accepted:
+            value = dialog.result_chain()
+            self._chain_rows.append(value)
+            self._publish_chain_action(value)
+            self._rebuild_chain_list()
+
+    def add_template(self):
+        from ..core.workflow_templates import instantiate
+        chain = instantiate(self.template_choice.currentData())
+        dialog = ChainEditorDialog(chain, self.service, self)
+        if dialog.exec() == QDialog.Accepted:
+            value = dialog.result_chain()
+            self._chain_rows.append(value)
+            self._publish_chain_action(value)
+            self._rebuild_chain_list()
+            self.status.setText('工作流和面板按钮已添加到草稿，请保存并立即生效')
+
+    def _publish_chain_action(self, chain):
+        rows = self.action_editor.rows()
+        for row in rows:
+            if row.get('kind') == 'chain.run' and (row.get('params') or {}).get('chain_id') == chain['id']:
+                row['name'] = chain['name']
+                self.action_editor.set_rows(rows)
+                return
+        rows.append(dict(id='run.' + chain['id'], name=chain['name'], kind='chain.run',
+                         group='事件链', icon='workflow', zone='public', order=100,
+                         params=dict(chain_id=chain['id'])))
+        self.action_editor.set_rows(rows)
 
     def edit_chain(self) -> None:
         c = self._selected_chain()
@@ -625,12 +724,22 @@ class SettingsWindow(QWidget):
                 if old is c or old.get("id") == c.get("id"):
                     self._chain_rows[i] = new
                     break
+            self._publish_chain_action(new)
             self._rebuild_chain_list()
 
     def del_chain(self) -> None:
         c = self._selected_chain()
         if c:
             self._chain_rows = [x for x in self._chain_rows if x.get("id") != c.get("id")]
+            rows = [row for row in self.action_editor.rows() if not (
+                row.get('kind') == 'chain.run' and (row.get('params') or {}).get('chain_id') == c.get('id'))]
+            self.action_editor.set_rows(rows)
+            # Drop references to removed buttons in draft display rules as well.
+            live_ids = {row.get('id') for row in rows}
+            rules = self.rule_editor.rows()
+            for rule in rules:
+                rule['action_ids'] = [aid for aid in rule.get('action_ids', []) if aid in live_ids]
+            self.rule_editor.set_rows(rules)
             self._rebuild_chain_list()
 
     def run_chain(self) -> None:
@@ -638,8 +747,12 @@ class SettingsWindow(QWidget):
         if not c:
             self.status.setText("请先选中一条事件链")
             return
-        self.service.run_chain(c.get("id", ""))
-        self.status.setText("已在后台执行：%s" % c.get("name"))
+        stored = self.service.runner.find_chain(c.get('id', ''))
+        if stored != c:
+            self.status.setText('当前工作流尚未保存，请先保存；样本预览请打开编辑器')
+            return
+        task = self.service.run_chain(c.get("id", ""))
+        self.status.setText(('已在后台执行：' + c.get('name', '')) if task else '任务已在执行或队列已满')
 
     # ------------------------------------------------------------ 简单设置页
     @staticmethod
@@ -813,6 +926,8 @@ class SettingsWindow(QWidget):
 
     def reload_from_store(self) -> None:
         cfg = self.store.get()
+        self.reminders_page.set_rows(cfg.get('reminders', []))
+        self.tabs.privacy_status.setText('隐私模式 · 已开启' if cfg.get('privacy', {}).get('exclude_from_capture', True) else '隐私模式 · 已关闭')
         self.action_editor.set_rows(cfg.get("actions", []))
         self.snippet_editor.set_rows(cfg.get("snippets", []))
         self.rule_editor.set_rows(cfg.get("rules", []))
@@ -830,6 +945,8 @@ class SettingsWindow(QWidget):
             for k, _get, setter in page._getters:
                 if k in cfg.get(key, {}):
                     setter(cfg[key][k])
+        for key, _get, setter in self.performance_page._getters:
+            setter(cfg.get('performance', {}).get(key, 5 if key == 'model_idle_minutes' else True))
         for k, _get, setter in self.group_order_page._getters:
             if k == "group_order":
                 setter(self._panel_group_order(cfg))
@@ -867,6 +984,8 @@ class SettingsWindow(QWidget):
                 r["action_ids"] = [x.rsplit("（", 1)[-1].rstrip("）") for x in ids]
         cfg["rules"] = rules
         cfg["chains"] = self._chain_rows
+        cfg['reminders'] = self.reminders_page.collect()
+        cfg['performance'] = self.performance_page.collect()
         # 触发页：把两个热键表单项合回 trigger.hotkeys（id=panel 的一项）
         trigger = self.trigger_page.collect()
         hk_enabled = bool(trigger.pop("hotkey_panel_enabled", False))

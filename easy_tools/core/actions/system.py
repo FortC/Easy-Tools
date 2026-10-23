@@ -38,7 +38,7 @@ def _chain_run(ctx: ActionContext, params) -> ActionResult:
     if runner is None:
         return ActionResult.failure("事件链引擎未接入")
     res = runner.run_by_id(cid, ctx)
-    return ActionResult(res.ok, res.message, res.output)
+    return ActionResult(res.ok, res.message, res.output, trace=res.trace)
 
 
 @register("system.window_min", "最小化当前窗口", "", chain_id="system.window_min")

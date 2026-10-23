@@ -59,6 +59,9 @@ def kill_running() -> None:
 
 def clean() -> None:
     for p in (DIST, BUILD):
+        resolved = p.resolve()
+        if ROOT.resolve() not in resolved.parents or not (resolved.name == 'Easy-Tools' or resolved.name.startswith('build')):
+            raise ValueError('构建清理路径越界，已停止')
         if p.exists():
             shutil.rmtree(p)          # 不吞异常：删不掉就必须知道
             print("已清理", p)
