@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem,
                                QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
-                               QSpinBox, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
+                               QSpinBox, QStackedWidget, QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 from ..core.actions import base as action_base
 from ..core.actions.processors import all_processors
@@ -134,7 +134,7 @@ class SidebarTabs(QWidget):
     # 每个导航页对应的 Lucide 图标名（easy_tools/ui/icons/，ISC 许可）。
     # 图标缺失时条目仍创建，只是没有图标——不阻塞配置中心启动。
     _MARKS = {
-        "软件更新": "rocket", "动作库": "layout-grid", "文本片段": "text",
+        "软件更新": "rocket", "动作库": "layout-grid", "综合配置": "settings", "文本片段": "text",
         "特定操作区规则": "crosshair", "事件链": "workflow",
         "触发设置": "mouse-pointer-click", "面板样式": "palette",
         "分类排序": "list-ordered",
@@ -143,12 +143,22 @@ class SidebarTabs(QWidget):
         "本机模型": "cpu", "数据/导入导出": "arrow-down-up",
         '办公工具': 'file-spreadsheet', '定时提醒': 'clock', '运行任务': 'list-ordered',
     }
+    _CONFIG_PAGES = {
+        "软件更新", "特定操作区规则", "触发设置", "面板样式", "分类排序",
+        "性能与运行", "OCR 设置", "本机模型", "文本输入", "隐私保护", "数据/导入导出",
+    }
+    _PRIMARY = ["动作库", "办公工具", "事件链", "文本片段", "知识库", "定时提醒", "运行任务", "综合配置"]
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._titles: List[str] = []
         self._pages = QStackedWidget(self)
         self._pages.setObjectName("SettingsPages")
+        self._config_tabs = QTabWidget(self)
+        self._config_tabs.setObjectName("ComprehensiveConfigurationTabs")
+        self._page_indexes: Dict[int, int] = {}
+        self._config_indexes: Dict[int, int] = {}
+        self._comprehensive_index: int | None = None
         self._nav = QListWidget(self)
         self._nav.setObjectName("SettingsNavigation")
         self._nav.setFixedWidth(196)
@@ -163,11 +173,6 @@ class SidebarTabs(QWidget):
         brand.setObjectName("SettingsBrand")
         side.addWidget(brand)
         side.addWidget(self._nav, 1)
-        self.more = QPushButton('更多设置 ▸')
-        self.more.setObjectName('QuietButton')
-        self.more.setCheckable(True)
-        self.more.toggled.connect(self._toggle_advanced)
-        side.addWidget(self.more)
         self.privacy_status = QLabel('隐私保护')
         self.privacy_status.setObjectName('PrivacyStatus')
         self.privacy_status.setWordWrap(True)
@@ -193,31 +198,40 @@ class SidebarTabs(QWidget):
         self._nav.currentRowChanged.connect(self._select_page)
 
     def addTab(self, page: QWidget, title: str) -> int:
+        logical_index = len(self._titles)
         self._titles.append(title)
+        if title in self._CONFIG_PAGES:
+            self._config_indexes[logical_index] = self._config_tabs.addTab(page, title)
+            return logical_index
+        self._page_indexes[logical_index] = self._pages.addWidget(page)
+        self._add_nav_item(logical_index, title)
+        if len(self._page_indexes) == 1:
+            self._nav.setCurrentRow(0)
+        return logical_index
+
+    def _add_nav_item(self, logical_index: int, title: str) -> None:
         display = {'事件链': '工作流', '动作库': '工具管理', '特定操作区规则': '软件适用规则'}.get(title, title)
         item = QListWidgetItem(display)
-        item.setData(Qt.UserRole, len(self._titles) - 1)
+        item.setData(Qt.UserRole, logical_index)
         item.setToolTip(title)
         mark = self._MARKS.get(title)
         if mark and icons.has_icon(mark):
             item.setIcon(icons.icon(mark, "#475569", 18))
         self._nav.addItem(item)
-        index = self._pages.addWidget(page)
-        if index == 0:
-            self._nav.setCurrentRow(0)
-        return index
 
     def _select_page(self, index: int) -> None:
         if index < 0:
             return
         item = self._nav.item(index)
-        index = item.data(Qt.UserRole)
-        self._pages.setCurrentIndex(index)
-        if index < len(self._titles):
-            self._page_title.setText(item.text())
-        self.currentChanged.emit(index)
+        logical_index = item.data(Qt.UserRole)
+        self._pages.setCurrentIndex(self._page_indexes[logical_index])
+        self._page_title.setText(item.text())
+        self.currentChanged.emit(logical_index)
 
     def currentWidget(self) -> QWidget | None:
+        if (self._comprehensive_index is not None and
+                self._pages.currentIndex() == self._page_indexes[self._comprehensive_index]):
+            return self._config_tabs.currentWidget()
         return self._pages.currentWidget()
 
     def count(self) -> int:
@@ -227,37 +241,30 @@ class SidebarTabs(QWidget):
         return self._titles[index]
 
     def setCurrentIndex(self, index: int) -> None:
+        target = index
+        if index in self._config_indexes and self._comprehensive_index is not None:
+            self._config_tabs.setCurrentIndex(self._config_indexes[index])
+            target = self._comprehensive_index
         for row in range(self._nav.count()):
             item = self._nav.item(row)
-            if item.data(Qt.UserRole) == index:
-                if item.isHidden():
-                    self.more.setChecked(True)
+            if item.data(Qt.UserRole) == target:
                 self._nav.setCurrentRow(row)
                 return
 
     def arrange_navigation(self):
-        self._primary = ['办公工具', '事件链', '文本片段', '知识库', '定时提醒', '运行任务', '隐私保护']
+        if self._comprehensive_index is None:
+            self._comprehensive_index = len(self._titles)
+            self._titles.append("综合配置")
+            self._page_indexes[self._comprehensive_index] = self._pages.addWidget(self._config_tabs)
+            self._add_nav_item(self._comprehensive_index, "综合配置")
         self._nav.blockSignals(True)
         items = [self._nav.takeItem(0) for _ in range(self._nav.count())]
-        items.sort(key=lambda item: self._primary.index(self._titles[item.data(Qt.UserRole)])
-                   if self._titles[item.data(Qt.UserRole)] in self._primary else 100 + item.data(Qt.UserRole))
+        items.sort(key=lambda item: self._PRIMARY.index(self._titles[item.data(Qt.UserRole)])
+                   if self._titles[item.data(Qt.UserRole)] in self._PRIMARY else 100 + item.data(Qt.UserRole))
         for item in items:
             self._nav.addItem(item)
         self._nav.blockSignals(False)
-        self._toggle_advanced(False)
-        self.setCurrentIndex(0)
-
-    def _toggle_advanced(self, visible):
-        if not hasattr(self, '_primary'):
-            return
-        self.more.setText('收起设置 ▾' if visible else '更多设置 ▸')
-        for row in range(self._nav.count()):
-            item = self._nav.item(row)
-            title = self._titles[item.data(Qt.UserRole)]
-            item.setHidden(not visible and title not in self._primary)
-        current = self._nav.currentItem()
-        if current and current.isHidden():
-            self.setCurrentIndex(0)
+        self.setCurrentIndex(next(i for i, title in enumerate(self._titles) if title == "动作库"))
 
 
 class _ChainBox(QGroupBox):

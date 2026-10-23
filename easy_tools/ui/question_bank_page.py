@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import uuid
+import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog,
                                QHBoxLayout, QHeaderView, QLabel, QMenu,
-                               QFormLayout, QMessageBox, QPushButton, QTableWidget,
+                               QFormLayout, QMessageBox, QProgressBar, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..core.question_bank import inspect_excel_bank, load_question_bank
@@ -316,10 +317,13 @@ class QuestionBankPage(QWidget):
 
 
 class LocalModelPage(QWidget):
+    model_download_progress = Signal(int, int)
+
     def __init__(self, settings=None, model_client=None, parent=None):
         super().__init__(parent)
         self._client = model_client
         self._model_busy = False
+        self._download_cancel = None
         self._settings = dict(settings or {})
         layout = QVBoxLayout(self)
         title = QLabel("本地 / 云端模型")
@@ -343,9 +347,15 @@ class LocalModelPage(QWidget):
         note.setWordWrap(True)
         note.setObjectName("HintLabel")
         layout.addWidget(note)
-        self.status = QLabel("点击检查内置模型文件，或导入 CC Switch 当前配置。")
+        self.status = QLabel("完整版已内置模型；极速版可按需下载后在本机加载。")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.download_progress = QProgressBar(self)
+        self.download_progress.setRange(0, 1000)
+        self.download_progress.setValue(0)
+        self.download_progress.setFormat("模型下载：%p%")
+        self.download_progress.hide()
+        layout.addWidget(self.download_progress)
         buttons = QHBoxLayout()
         import_button = self.import_button = QPushButton("一键导入 CC Switch 当前配置")
         import_button.clicked.connect(self.import_ccswitch)
@@ -353,9 +363,17 @@ class LocalModelPage(QWidget):
         check = self.check_button = QPushButton("检查当前模型")
         check.clicked.connect(self.check_model)
         buttons.addWidget(check)
+        self.download_button = QPushButton("下载内置模型（约 258 MB）")
+        self.download_button.clicked.connect(self.download_builtin_model)
+        buttons.addWidget(self.download_button)
+        self.cancel_download_button = QPushButton("取消下载")
+        self.cancel_download_button.clicked.connect(self.cancel_model_download)
+        self.cancel_download_button.hide()
+        buttons.addWidget(self.cancel_download_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
         layout.addStretch(1)
+        self.model_download_progress.connect(self._download_progress_changed)
 
     def set_settings(self, settings):
         self._settings = dict(settings or {})
@@ -378,6 +396,52 @@ class LocalModelPage(QWidget):
         self.import_button.setEnabled(not busy)
         self.check_button.setEnabled(not busy)
         self.provider.setEnabled(not busy)
+        self.download_button.setEnabled(not busy)
+
+    def download_builtin_model(self):
+        if self._model_busy:
+            return
+        from ..core.builtin_model import BuiltinModel
+        self._download_cancel = threading.Event()
+        self._set_model_busy(True)
+        self.download_progress.setValue(0)
+        self.download_progress.show()
+        self.cancel_download_button.show()
+        self.status.setStyleSheet("")
+        self.status.setText("正在从 Hugging Face 下载固定版本的公开模型；文件只保存到本机用户数据目录，不会上传提问或文件内容。")
+        cancel_event = self._download_cancel
+        if not submit(lambda: BuiltinModel.download_model(
+                lambda done, total: self.model_download_progress.emit(done, total), cancel_event),
+                self._model_download_finished):
+            self._finish_model_download_ui()
+            self.status.setText("后台任务较多，请稍后重试。")
+
+    def cancel_model_download(self):
+        if self._download_cancel is not None:
+            self._download_cancel.set()
+            self.cancel_download_button.setEnabled(False)
+            self.status.setText("正在取消下载并清理临时文件…")
+
+    @Slot(int, int)
+    def _download_progress_changed(self, done, total):
+        self.download_progress.setValue(int(done * 1000 / max(1, total)))
+        self.status.setText("正在下载并校验模型：%.1f / %.1f MB" % (done / 1048576, total / 1048576))
+
+    def _finish_model_download_ui(self):
+        self._set_model_busy(False)
+        self._download_cancel = None
+        self.cancel_download_button.setEnabled(True)
+        self.cancel_download_button.hide()
+
+    def _model_download_finished(self, path, error):
+        self._finish_model_download_ui()
+        if error:
+            self.status.setStyleSheet("color:#b34242")
+            self.status.setText("模型下载未完成：" + error)
+            return
+        self.download_progress.setValue(1000)
+        self.status.setStyleSheet("color:#27834b")
+        self.status.setText("模型已下载并通过 SHA-256 校验，保存在本机：%s。切换到内置模型即可离线加载。" % path)
 
     def import_ccswitch(self):
         if self._model_busy:
@@ -445,7 +509,8 @@ class LocalModelPage(QWidget):
                 from ..core.builtin_model import BuiltinModel
                 assets = BuiltinModel().assets()
                 return {"available": assets["available"], "builtin": True,
-                    "reason": "内置模型权重与运行时已就绪；首次回答会后台加载模型。" if assets["available"] else "缺少离线模型文件或运行时，请重新安装完整安装包。"}
+                    "reason": ("内置模型权重与运行时已就绪；首次回答会后台加载模型。" if assets["available"]
+                               else "未找到本机模型权重或 llama.cpp 运行时；极速版可点击“下载内置模型”，若运行时缺失请安装完整版。")}
             return client.discover(str(settings.get("ccswitch_app") or ""),
                 bool(settings.get("allow_cloud", False)),
                 expected_url=str(settings.get("ccswitch_base_url") or "")) if client else {

@@ -28,7 +28,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+EDITION = next((sys.argv[i + 1] for i, arg in enumerate(sys.argv[:-1]) if arg == "--edition"), "full").lower()
+if EDITION not in ("lite", "full"):
+    raise SystemExit("--edition 只接受 lite 或 full")
 TAG = next((sys.argv[i + 1] for i, arg in enumerate(sys.argv[:-1]) if arg == "--tag"), "")
+if EDITION == "lite" and not TAG:
+    TAG = "lite"
 if TAG and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,40}", TAG):
     raise SystemExit("--tag 只接受字母、数字、点、下划线和连字符")
 DIST_ROOT = ROOT / (("dist-" + TAG) if TAG else "dist")
@@ -95,6 +100,7 @@ def main() -> int:
     print("执行：", " ".join(cmd))
     env = os.environ.copy()
     env["EASYTOOLS_BUILD_TAG"] = TAG
+    env["EASYTOOLS_EDITION"] = EDITION
     r = subprocess.run(cmd, cwd=str(ROOT), env=env)
     if r.returncode != 0:
         print("!! PyInstaller 失败，退出码", r.returncode)

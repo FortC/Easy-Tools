@@ -7,16 +7,22 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
-from .paths import resource_root
+from .paths import data_dir, resource_root
 from .question_bank import format_bank_evidence
 
 
 class BuiltinModel:
     MODEL_NAME = "SmolLM2-360M-Instruct-Q4_K_M.gguf"
+    MODEL_SIZE = 270590880
+    MODEL_SHA256 = "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2"
+    MODEL_URL = ("https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/"
+                 "7be6f65f1db715fe5dc5a4634c0d459b4eed42ec/" + MODEL_NAME)
 
     def __init__(self):
         self._lock = threading.RLock()
@@ -33,10 +39,62 @@ class BuiltinModel:
         if not (runtime / "llama-server.exe").is_file():
             runtime = root / "vendor" / "llama"
         exe = runtime / "llama-server.exe"
-        model = root / "models" / self.MODEL_NAME
+        bundled_model = root / "models" / self.MODEL_NAME
+        user_model = data_dir() / "models" / self.MODEL_NAME
+        model = bundled_model if bundled_model.is_file() else user_model
         return {"available": exe.is_file() and model.is_file(),
                 "runtime": exe.is_file(), "model": model.is_file(),
+                "bundled_model": bundled_model.is_file(),
                 "model_path": str(model), "runtime_path": str(exe)}
+
+    @classmethod
+    def download_model(cls, progress=None, cancel_event=None) -> Path:
+        """Download the pinned public model into the writable per-user data folder."""
+        import hashlib
+
+        target = data_dir() / "models" / cls.MODEL_NAME
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_file() and target.stat().st_size == cls.MODEL_SIZE:
+            digest = hashlib.sha256()
+            with target.open("rb") as existing:
+                for block in iter(lambda: existing.read(1024 * 1024), b""):
+                    digest.update(block)
+            if digest.hexdigest() == cls.MODEL_SHA256:
+                return target
+
+        part = target.with_name(target.name + ".part-" + uuid.uuid4().hex)
+        request = urllib.request.Request(cls.MODEL_URL, headers={"User-Agent": "Easy-Tools model downloader"})
+        received = 0
+        digest = hashlib.sha256()
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response, part.open("xb") as output:
+                final_url = response.geturl()
+                final_host = (urlparse(final_url).hostname or "").lower()
+                if not final_url.lower().startswith("https://") or not (
+                        final_host == "huggingface.co" or final_host.endswith(".huggingface.co") or
+                        final_host.endswith(".hf.co")):
+                    raise ValueError("模型下载跳转到了未受信任的 HTTPS 域名。")
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise InterruptedError("已取消模型下载。")
+                    block = response.read(1024 * 1024)
+                    if not block:
+                        break
+                    received += len(block)
+                    if received > cls.MODEL_SIZE:
+                        raise ValueError("模型文件大小超过预期，已停止下载。")
+                    output.write(block)
+                    digest.update(block)
+                    if progress:
+                        progress(received, cls.MODEL_SIZE)
+                output.flush()
+                os.fsync(output.fileno())
+            if received != cls.MODEL_SIZE or digest.hexdigest() != cls.MODEL_SHA256:
+                raise ValueError("模型文件大小或 SHA-256 校验失败；原模型文件未替换。")
+            os.replace(part, target)
+            return target
+        finally:
+            part.unlink(missing_ok=True)
 
     def answer(self, prompt: str, evidence: list[dict] | None = None) -> str:
         if not self._answer_gate.acquire(blocking=False):
