@@ -1,6 +1,6 @@
 [project]
 name = "easy-tools"
-version = "0.4.1"
+version = "0.4.2"
 description = "Windows desktop office tools, private workflow automation and local reminders"
 requires-python = ">=3.10"
 authors = [{ name = "clb", email = "lamthebest@foxmail.com" }]
